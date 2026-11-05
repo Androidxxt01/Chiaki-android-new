@@ -3,8 +3,7 @@ package com.metallic.chiaki.lib
 import android.os.Parcelable
 import android.util.Log
 import android.view.Surface
-import kotlinx.android.parcel.IgnoredOnParcel
-import kotlinx.android.parcel.Parcelize
+import kotlinx.parcelize.Parcelize
 import java.lang.Exception
 import java.net.InetSocketAddress
 import kotlin.math.abs
@@ -84,14 +83,14 @@ private class ChiakiNative
 		}
 		@JvmStatic external fun errorCodeToString(value: Int): String
 		@JvmStatic external fun quitReasonToString(value: Int): String
-		@JvmStatic external fun quitReasonIsStopped(value: Int): Boolean
+		@JvmStatic external fun quitReasonIsError(value: Int): Boolean
 		@JvmStatic external fun videoProfilePreset(resolutionPreset: Int, fpsPreset: Int, codec: Codec): ConnectVideoProfile
 		@JvmStatic external fun sessionCreate(result: CreateResult, connectInfo: ConnectInfo, logFile: String?, logVerbose: Boolean, javaSession: Session)
 		@JvmStatic external fun sessionFree(ptr: Long)
 		@JvmStatic external fun sessionStart(ptr: Long): Int
 		@JvmStatic external fun sessionStop(ptr: Long): Int
 		@JvmStatic external fun sessionJoin(ptr: Long): Int
-		@JvmStatic external fun sessionSetSurface(ptr: Long, surface: Surface)
+		@JvmStatic external fun sessionSetSurface(ptr: Long, surface: Surface?)
 		@JvmStatic external fun sessionSetControllerState(ptr: Long, controllerState: ControllerState)
 		@JvmStatic external fun sessionSetLoginPin(ptr: Long, pin: String)
 		@JvmStatic external fun discoveryServiceCreate(result: CreateResult, options: DiscoveryServiceOptions, javaService: DiscoveryService)
@@ -153,9 +152,9 @@ private fun maxAbs(a: Short, b: Short) = if(abs(a.toInt()) > abs(b.toInt())) a e
 private val CONTROLLER_TOUCHES_MAX = 2 // must be the same as CHIAKI_CONTROLLER_TOUCHES_MAX
 
 data class ControllerTouch(
-	val x: UShort = 0U,
-	val y: UShort = 0U,
-	val id: Byte = -1 // -1 = up
+	var x: UShort = 0U,
+	var y: UShort = 0U,
+	var id: Byte = -1 // -1 = up
 )
 
 data class ControllerState constructor(
@@ -197,6 +196,8 @@ data class ControllerState constructor(
 		val BUTTON_SHARE 		= (1 shl 13).toUInt()
 		val BUTTON_TOUCHPAD		= (1 shl 14).toUInt()
 		val BUTTON_PS			= (1 shl 15).toUInt()
+		val TOUCHPAD_WIDTH: UShort = 1920U
+		val TOUCHPAD_HEIGHT: UShort = 942U
 	}
 
 	infix fun or(o: ControllerState) = ControllerState(
@@ -273,16 +274,42 @@ data class ControllerState constructor(
 		result = 31 * result + orientW.hashCode()
 		return result
 	}
+
+	fun startTouch(x: UShort, y: UShort): UByte? =
+		touches
+			.find { it.id < 0 }
+			?.also {
+				it.id = touchIdNext.toByte()
+				it.x = x
+				it.y = y
+				touchIdNext = ((touchIdNext + 1U) and 0x7fU).toUByte()
+			}?.id?.toUByte()
+
+	fun stopTouch(id: UByte)
+	{
+		touches.find {
+			it.id >= 0 && it.id == id.toByte()
+		}?.let {
+			it.id = -1
+		}
+	}
+
+	fun setTouchPos(id: UByte, x: UShort, y: UShort): Boolean
+		= touches.find {
+			it.id >= 0 && it.id == id.toByte()
+		}?.let {
+			val r = it.x != x || it.y != y
+			it.x = x
+			it.y = y
+			r
+		} ?: false
 }
 
 class QuitReason(val value: Int)
 {
 	override fun toString() = ChiakiNative.quitReasonToString(value)
 
-	/**
-	 * whether the reason is CHIAKI_QUIT_REASON_STOPPED
-	 */
-	val isStopped = ChiakiNative.quitReasonIsStopped(value)
+	val isError = ChiakiNative.quitReasonIsError(value)
 }
 
 sealed class Event
@@ -350,7 +377,7 @@ class Session(connectInfo: ConnectInfo, logFile: String?, logVerbose: Boolean)
 		event(RumbleEvent(left.toUByte(), right.toUByte()))
 	}
 
-	fun setSurface(surface: Surface)
+	fun setSurface(surface: Surface?)
 	{
 		ChiakiNative.sessionSetSurface(nativePtr, surface)
 	}

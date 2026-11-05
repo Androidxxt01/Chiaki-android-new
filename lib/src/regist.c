@@ -8,10 +8,12 @@
 #include <chiaki/random.h>
 #include <chiaki/time.h>
 #include <chiaki/base64.h>
+#include <chiaki/session.h>
 
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -30,17 +32,20 @@ typedef uint32_t in_addr_t;
 static void *regist_thread_func(void *user);
 static ChiakiErrorCode regist_search(ChiakiRegist *regist, struct addrinfo *addrinfos, struct sockaddr *recv_addr, socklen_t *recv_addr_size);
 static chiaki_socket_t regist_search_connect(ChiakiRegist *regist, struct addrinfo *addrinfos, struct sockaddr *send_addr, socklen_t *send_addr_len);
-static chiaki_socket_t regist_request_connect(ChiakiRegist *regist, const struct sockaddr *addr, size_t addr_len);
-static ChiakiErrorCode regist_recv_response(ChiakiRegist *regist, ChiakiRegisteredHost *host, chiaki_socket_t sock, ChiakiRPCrypt *rpcrypt);
+static ChiakiErrorCode regist_request_connect(ChiakiRegist *regist, const struct sockaddr *addr, size_t addr_len, chiaki_socket_t *sock_out);
+static ChiakiErrorCode regist_recv_response(ChiakiRegist *regist, ChiakiRegisteredHost *host, chiaki_socket_t sock, ChiakiRPCrypt *rpcrypt, uint16_t remote_counter, char *send_buf, size_t send_buf_size);
 static ChiakiErrorCode regist_parse_response_payload(ChiakiRegist *regist, ChiakiRegisteredHost *host, char *buf, size_t buf_size);
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_regist_start(ChiakiRegist *regist, ChiakiLog *log, const ChiakiRegistInfo *info, ChiakiRegistCb cb, void *cb_user)
 {
 	regist->log = log;
 	regist->info = *info;
-	regist->info.host = strdup(regist->info.host);
-	if(!regist->info.host)
-		return CHIAKI_ERR_MEMORY;
+	if(!regist->info.holepunch_info)
+	{
+		regist->info.host = strdup(regist->info.host);
+		if(!regist->info.host)
+			return CHIAKI_ERR_MEMORY;
+	}
 
 	ChiakiErrorCode err = CHIAKI_ERR_UNKNOWN;
 	if(regist->info.psn_online_id)
@@ -97,7 +102,7 @@ static void regist_event_simple(ChiakiRegist *regist, ChiakiRegistEventType type
 
 static const char *const request_head_fmt =
 	"POST %s HTTP/1.1\r\n HTTP/1.1\r\n"
-	"HOST: 10.0.2.15\r\n" // random lol
+	"HOST: %s\r\n"
 	"User-Agent: remoteplay Windows\r\n"
 	"Connection: close\r\n"
 	"Content-Length: %llu\r\n";
@@ -137,10 +142,10 @@ static const char *const request_inner_online_id_fmt =
 	"Np-Online-Id: %s\r\n";
 
 
-static int request_header_format(char *buf, size_t buf_size, size_t payload_size, ChiakiTarget target)
+static int request_header_format(char *buf, size_t buf_size, size_t payload_size, ChiakiTarget target, char *regist_local_addr)
 {
 	int cur = snprintf(buf, buf_size, request_head_fmt, request_path(target),
-			(unsigned long long)payload_size);
+			regist_local_addr, (unsigned long long)payload_size);
 	if(cur < 0 || cur >= payload_size)
 		return -1;
 	if(target >= CHIAKI_TARGET_PS4_9)
@@ -160,7 +165,7 @@ static int request_header_format(char *buf, size_t buf_size, size_t payload_size
 	return cur;
 }
 
-CHIAKI_EXPORT ChiakiErrorCode chiaki_regist_request_payload_format(ChiakiTarget target, const uint8_t *ambassador, uint8_t *buf, size_t *buf_size, ChiakiRPCrypt *crypt, const char *psn_online_id, const uint8_t *psn_account_id, uint32_t pin)
+CHIAKI_EXPORT ChiakiErrorCode chiaki_regist_request_payload_format(ChiakiTarget target, const uint8_t *ambassador, uint8_t *buf, size_t *buf_size, ChiakiRPCrypt *crypt, const char *psn_online_id, const uint8_t *psn_account_id, uint32_t pin, ChiakiHolepunchRegistInfo *holepunch_info)
 {
 	size_t buf_size_val = *buf_size;
 	static const size_t inner_header_off = 0x1e0;
@@ -177,11 +182,22 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_regist_request_payload_format(ChiakiTarget 
 	{
 		size_t key_0_off = buf[0x18D] & 0x1F;
 		size_t key_1_off = buf[0] >> 3;
-		ChiakiErrorCode err = chiaki_rpcrypt_init_regist(crypt, target, ambassador, key_0_off, pin);
-		if(err != CHIAKI_ERR_SUCCESS)
-			return err;
 		uint8_t aeropause[0x10];
-		err = chiaki_rpcrypt_aeropause(target, key_1_off, aeropause, crypt->ambassador);
+		ChiakiErrorCode err;
+		if(holepunch_info)
+		{
+			err = chiaki_rpcrypt_init_regist_psn(crypt, target, ambassador, key_0_off, holepunch_info->custom_data1, holepunch_info->data1, holepunch_info->data2);
+			if(err != CHIAKI_ERR_SUCCESS)
+				return err;
+			err = chiaki_rpcrypt_aeropause_psn(target, key_1_off, aeropause, crypt->ambassador);
+		}
+		else
+		{
+			err = chiaki_rpcrypt_init_regist(crypt, target, ambassador, key_0_off, pin);
+			if(err != CHIAKI_ERR_SUCCESS)
+				return err;
+			err = chiaki_rpcrypt_aeropause(target, key_1_off, aeropause, crypt->ambassador);
+		}
 		if(err != CHIAKI_ERR_SUCCESS)
 			return err;
 		memcpy(buf + 0xc7, aeropause + 8, 8);
@@ -215,9 +231,14 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_regist_request_payload_format(ChiakiTarget 
 static void *regist_thread_func(void *user)
 {
 	ChiakiRegist *regist = user;
+	chiaki_thread_set_affinity(CHIAKI_THREAD_NAME_REGIST);
 
 	bool canceled = false;
 	bool success = false;
+	bool psn = false;
+	// if holepunch info is filled out, this is a psn regist
+	if(regist->info.holepunch_info)
+		psn = true;
 
 	ChiakiRPCrypt crypt;
 	uint8_t ambassador[CHIAKI_RPCRYPT_KEY_SIZE];
@@ -230,7 +251,7 @@ static void *regist_thread_func(void *user)
 
 	uint8_t payload[0x400];
 	size_t payload_size = sizeof(payload);
-	err = chiaki_regist_request_payload_format(regist->info.target, ambassador, payload, &payload_size, &crypt, regist->info.psn_online_id, regist->info.psn_account_id, regist->info.pin);
+	err = chiaki_regist_request_payload_format(regist->info.target, ambassador, payload, &payload_size, &crypt, regist->info.psn_online_id, regist->info.psn_account_id, regist->info.pin, regist->info.holepunch_info);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		CHIAKI_LOGE(regist->log, "Regist failed to format payload");
@@ -238,7 +259,11 @@ static void *regist_thread_func(void *user)
 	}
 
 	char request_header[0x100];
-	int request_header_size = request_header_format(request_header, sizeof(request_header), payload_size, regist->info.target);
+	// random local addr if our local addr is not provided
+	char regist_local_addr[INET6_ADDRSTRLEN] = "10.0.2.15";
+	if(regist->info.holepunch_info)
+		memcpy(regist_local_addr, regist->info.holepunch_info->regist_local_ip, sizeof(regist_local_addr));
+	int request_header_size = request_header_format(request_header, sizeof(request_header), payload_size, regist->info.target, regist_local_addr);
 
 	if(request_header_size < 0 || request_header_size >= sizeof(request_header))
 	{
@@ -249,69 +274,136 @@ static void *regist_thread_func(void *user)
 	CHIAKI_LOGV(regist->log, "Regist formatted request header:");
 	chiaki_log_hexdump(regist->log, CHIAKI_LOG_VERBOSE, (uint8_t *)request_header, request_header_size);
 
+	chiaki_socket_t sock = CHIAKI_INVALID_SOCKET;
+	uint16_t remote_counter = 0;
 	struct addrinfo *addrinfos;
-	int r = getaddrinfo(regist->info.host, NULL, NULL, &addrinfos);
-	if(r != 0)
+	if(psn)
 	{
-		CHIAKI_LOGE(regist->log, "Regist failed to getaddrinfo on %s", regist->info.host);
-		goto fail;
+		CHIAKI_LOGI(regist->log, "REGIST - Starting RUDP session");
+		RudpMessage message;
+		err = chiaki_rudp_send_recv(regist->info.rudp, &message, NULL, 0, 0, INIT_REQUEST, INIT_RESPONSE, 8, 3);
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			CHIAKI_LOGE(regist->log, "REGIST - Failed to init rudp");
+			goto fail;
+		}
+		size_t init_response_size = message.data_size - 8;
+		uint8_t init_response[init_response_size];
+		memcpy(init_response, message.data + 8, init_response_size);
+		chiaki_rudp_message_pointers_free(&message);
+		err = chiaki_rudp_send_recv(regist->info.rudp, &message, init_response, init_response_size, 0, COOKIE_REQUEST, COOKIE_RESPONSE, 2, 3);
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			CHIAKI_LOGE(regist->log, "REGIST - Failed to pass rudp cookie");
+			goto fail;
+		}
+		remote_counter = message.remote_counter;
+		chiaki_rudp_message_pointers_free(&message);
 	}
-
-	struct sockaddr recv_addr = { 0 };
-	socklen_t recv_addr_size;
-	recv_addr_size = sizeof(recv_addr);
-	err = regist_search(regist, addrinfos, &recv_addr, &recv_addr_size);
-	if(err != CHIAKI_ERR_SUCCESS)
+	else
 	{
-		if(err == CHIAKI_ERR_CANCELED)
-			canceled = true;
+		struct addrinfo hints;
+		memset(&hints, 0, sizeof(hints));
+		hints.ai_socktype = SOCK_DGRAM;
+		char *ipv6 = strchr(regist->info.host, ':');
+		if(ipv6)
+			hints.ai_family = AF_INET6;
 		else
-			CHIAKI_LOGE(regist->log, "Regist search failed");
-		goto fail_addrinfos;
+			hints.ai_family = AF_INET;
+		int r = getaddrinfo(regist->info.host, NULL, &hints, &addrinfos);
+		if(r != 0)
+		{
+			CHIAKI_LOGE(regist->log, "Regist failed to getaddrinfo on %s", regist->info.host);
+			goto fail;
+		}
+
+		struct sockaddr_storage recv_addr = { 0 };
+		socklen_t recv_addr_size;
+		recv_addr_size = sizeof(recv_addr);
+		err = regist_search(regist, addrinfos, (struct sockaddr *)&recv_addr, &recv_addr_size);
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			if(err == CHIAKI_ERR_CANCELED)
+				canceled = true;
+			else
+				CHIAKI_LOGE(regist->log, "Regist search failed");
+			goto fail_addrinfos;
+		}
+
+		err = chiaki_stop_pipe_sleep(&regist->stop_pipe, SEARCH_REQUEST_SLEEP_MS); // PS4 doesn't accept requests immediately
+		if(err != CHIAKI_ERR_TIMEOUT)
+		{
+			canceled = true;
+			goto fail_addrinfos;
+		}
+
+		err = regist_request_connect(regist, (struct sockaddr *)&recv_addr, recv_addr_size, &sock);
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			if(err == CHIAKI_ERR_CANCELED)
+				canceled = true;
+			else
+				CHIAKI_LOGE(regist->log, "Regist eventually failed to connect for request");
+			goto fail_addrinfos;
+		}
+		CHIAKI_LOGI(regist->log, "Regist connected to %s, sending request", regist->info.host);
 	}
-
-	err = chiaki_stop_pipe_sleep(&regist->stop_pipe, SEARCH_REQUEST_SLEEP_MS); // PS4 doesn't accept requests immediately
-	if(err != CHIAKI_ERR_TIMEOUT)
+	if(!psn)
 	{
-		canceled = true;
-		goto fail_addrinfos;
-	}
-
-	chiaki_socket_t sock = regist_request_connect(regist, &recv_addr, recv_addr_size);
-	if(CHIAKI_SOCKET_IS_INVALID(sock))
-	{
-		CHIAKI_LOGE(regist->log, "Regist eventually failed to connect for request");
-		goto fail_addrinfos;
-	}
-
-	CHIAKI_LOGI(regist->log, "Regist connected to %s, sending request", regist->info.host);
-
-	int s = send(sock, request_header, request_header_size, 0);
-	if(s < 0)
-	{
+		ChiakiErrorCode send_err = chiaki_send_fully(&regist->stop_pipe, sock, (const uint8_t *)request_header, request_header_size, REGIST_REPONSE_TIMEOUT_MS);
+		if(send_err != CHIAKI_ERR_SUCCESS)
+		{
+			if(send_err == CHIAKI_ERR_CANCELED)
+			{
+				canceled = true;
+				CHIAKI_LOGI(regist->log, "Regist canceled while sending request header");
+			}
+			else
+			{
 #ifdef _WIN32
-		CHIAKI_LOGE(regist->log, "Regist failed to send request header: %u", WSAGetLastError());
+				CHIAKI_LOGE(regist->log, "Regist failed to send request header: %u", WSAGetLastError());
 #else
-		CHIAKI_LOGE(regist->log, "Regist failed to send request header: %s", strerror(errno));
+				CHIAKI_LOGE(regist->log, "Regist failed to send request header: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
 #endif
-		goto fail_socket;
+			}
+			goto fail_socket;
+		}
 	}
-
-	s = send(sock, payload, payload_size, 0);
-	if(s < 0)
+	char *send_buf = NULL;
+	size_t send_buf_size = 0;
+	if(psn)
 	{
+		send_buf_size = request_header_size + payload_size;
+		send_buf = calloc(send_buf_size, sizeof(char));
+		memcpy(send_buf, request_header, request_header_size);
+		memcpy(send_buf + request_header_size, payload, payload_size);
+	}
+	else
+	{
+		ChiakiErrorCode send_err = chiaki_send_fully(&regist->stop_pipe, sock, payload, payload_size, REGIST_REPONSE_TIMEOUT_MS);
+		if(send_err != CHIAKI_ERR_SUCCESS)
+		{
+			if(send_err == CHIAKI_ERR_CANCELED)
+			{
+				canceled = true;
+				CHIAKI_LOGI(regist->log, "Regist canceled while sending payload");
+			}
+			else
+			{
 #ifdef _WIN32
-		CHIAKI_LOGE(regist->log, "Regist failed to send payload: %u", WSAGetLastError());
+				CHIAKI_LOGE(regist->log, "Regist failed to send payload: %u", WSAGetLastError());
 #else
-		CHIAKI_LOGE(regist->log, "Regist failed to send payload: %s", strerror(errno));
+				CHIAKI_LOGE(regist->log, "Regist failed to send payload: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
 #endif
-		goto fail_socket;
+			}
+			goto fail_socket;
+		}
+		CHIAKI_LOGI(regist->log, "Regist waiting for response");
 	}
 
-	CHIAKI_LOGI(regist->log, "Regist waiting for response");
 
 	ChiakiRegisteredHost host;
-	err = regist_recv_response(regist, &host, sock, &crypt);
+	err = regist_recv_response(regist, &host, sock, &crypt, remote_counter, send_buf, send_buf_size);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		if(err == CHIAKI_ERR_CANCELED)
@@ -326,9 +418,17 @@ static void *regist_thread_func(void *user)
 	success = true;
 
 fail_socket:
-	CHIAKI_SOCKET_CLOSE(sock);
+	if(!psn)
+	{
+		if(!CHIAKI_SOCKET_IS_INVALID(sock))
+		{
+			CHIAKI_SOCKET_CLOSE(sock);
+			sock = CHIAKI_INVALID_SOCKET;
+		}
+	}
 fail_addrinfos:
-	freeaddrinfo(addrinfos);
+	if(!psn)
+		freeaddrinfo(addrinfos);
 fail:
 	if(canceled)
 	{
@@ -337,6 +437,7 @@ fail:
 	}
 	else if(success)
 	{
+		host.console_pin = regist->info.console_pin;
 		ChiakiRegistEvent event = { 0 };
 		event.type = CHIAKI_REGIST_EVENT_TYPE_FINISHED_SUCCESS;
 		event.registered_host = &host;
@@ -350,9 +451,9 @@ fail:
 static ChiakiErrorCode regist_search(ChiakiRegist *regist, struct addrinfo *addrinfos, struct sockaddr *recv_addr, socklen_t *recv_addr_size)
 {
 	CHIAKI_LOGI(regist->log, "Regist starting search");
-	struct sockaddr send_addr;
+	struct sockaddr_storage send_addr;
 	socklen_t send_addr_len = sizeof(send_addr);
-	chiaki_socket_t sock = regist_search_connect(regist, addrinfos, &send_addr, &send_addr_len);
+	chiaki_socket_t sock = regist_search_connect(regist, addrinfos, (struct sockaddr *)&send_addr, &send_addr_len);
 	if(CHIAKI_SOCKET_IS_INVALID(sock))
 	{
 		CHIAKI_LOGE(regist->log, "Regist eventually failed to connect for search");
@@ -368,12 +469,12 @@ static ChiakiErrorCode regist_search(ChiakiRegist *regist, struct addrinfo *addr
 	CHIAKI_LOGI(regist->log, "Regist sending search packet");
 	int r;
 	if(regist->info.broadcast)
-		r = sendto_broadcast(regist->log, sock, src, strlen(src) + 1, 0, &send_addr, send_addr_len);
+		r = sendto_broadcast(regist->log, sock, src, strlen(src) + 1, 0, (struct sockaddr *)&send_addr, send_addr_len);
 	else
 		r = send(sock, src, strlen(src) + 1, 0);
 	if(r < 0)
 	{
-		CHIAKI_LOGE(regist->log, "Regist failed to send search: %s", strerror(errno));
+		CHIAKI_LOGE(regist->log, "Regist failed to send search: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
 		err = CHIAKI_ERR_NETWORK;
 		goto done;
 	}
@@ -394,18 +495,27 @@ static ChiakiErrorCode regist_search(ChiakiRegist *regist, struct addrinfo *addr
 		}
 
 		uint8_t buf[0x100];
-		int n = recvfrom(sock, buf, sizeof(buf) - 1, 0, recv_addr, recv_addr_size);
+		CHIAKI_SSIZET_TYPE n = recvfrom(sock, (CHIAKI_SOCKET_BUF_TYPE)buf, sizeof(buf) - 1, 0, recv_addr, recv_addr_size);
 		if(n <= 0)
 		{
 			if(n < 0)
-				CHIAKI_LOGE(regist->log, "Regist failed to receive search response: %s", strerror(errno));
+			{
+#ifdef _WIN32
+				bool refused = WSAGetLastError() == WSAECONNRESET;
+#else
+				bool refused = errno == ECONNREFUSED;
+#endif
+				CHIAKI_LOGE(regist->log, "Regist failed to receive search response: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
+				if(refused)
+					CHIAKI_LOGE(regist->log, "The console refused the registration search, keep its Link Device (PS5) or Add Device (PS4) screen with the code open while registering");
+			}
 			else
 				CHIAKI_LOGE(regist->log, "Regist failed to receive search response");
 			err = CHIAKI_ERR_NETWORK;
 			goto done;
 		}
 
-		CHIAKI_LOGV(regist->log, "Regist received packet: %d >= %d", n, res_size);
+		CHIAKI_LOGV(regist->log, "Regist received packet: %zd >= %zu", n, res_size);
 		chiaki_log_hexdump(regist->log, CHIAKI_LOG_VERBOSE, buf, n);
 
 		if(n >= res_size && !memcmp(buf, res, res_size))
@@ -418,19 +528,24 @@ static ChiakiErrorCode regist_search(ChiakiRegist *regist, struct addrinfo *addr
 	}
 
 done:
-	CHIAKI_SOCKET_CLOSE(sock);
+	if(!CHIAKI_SOCKET_IS_INVALID(sock))
+	{
+		CHIAKI_SOCKET_CLOSE(sock);
+		sock = CHIAKI_INVALID_SOCKET;
+	}
 	return err;
 }
 
 static chiaki_socket_t regist_search_connect(ChiakiRegist *regist, struct addrinfo *addrinfos, struct sockaddr *send_addr, socklen_t *send_addr_len)
 {
 	chiaki_socket_t sock = CHIAKI_INVALID_SOCKET;
+	bool connected = false;
 	for(struct addrinfo *ai=addrinfos; ai; ai=ai->ai_next)
 	{
 		//if(ai->ai_protocol != IPPROTO_UDP)
 		//	continue;
 
-		if(ai->ai_addr->sa_family != AF_INET) // TODO: support IPv6
+		if(ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
 			continue;
 
 		if(ai->ai_addrlen > *send_addr_len)
@@ -440,35 +555,49 @@ static chiaki_socket_t regist_search_connect(ChiakiRegist *regist, struct addrin
 
 		set_port(send_addr, htons(REGIST_PORT));
 
-		sock = socket(ai->ai_family, SOCK_DGRAM, IPPROTO_UDP);
+		sock = socket(send_addr->sa_family, SOCK_DGRAM, IPPROTO_UDP);
 		if(CHIAKI_SOCKET_IS_INVALID(sock))
 		{
 			CHIAKI_LOGE(regist->log, "Regist failed to create socket for search");
 			continue;
 		}
-
+		int r = 0;
 		if(regist->info.broadcast)
 		{
 			const int broadcast = 1;
-			int r = setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const void *)&broadcast, sizeof(broadcast));
-			if(r < 0)
+			if(send_addr->sa_family == AF_INET)
 			{
+				r = setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (const CHIAKI_SOCKET_BUF_TYPE)&broadcast, sizeof(broadcast));
+				if(r < 0)
+				{
 #ifdef _WIN32
-				CHIAKI_LOGE(regist->log, "Regist failed to setsockopt SO_BROADCAST, error %u", WSAGetLastError());
+					CHIAKI_LOGE(regist->log, "Regist failed to setsockopt SO_BROADCAST, error %u", WSAGetLastError());
 #else
-				CHIAKI_LOGE(regist->log, "Regist failed to setsockopt SO_BROADCAST");
+					CHIAKI_LOGE(regist->log, "Regist failed to setsockopt SO_BROADCAST");
 #endif
-				goto connect_fail;
+					goto connect_fail;
+				}
+				in_addr_t ip = ((struct sockaddr_in *)send_addr)->sin_addr.s_addr;
+				((struct sockaddr_in *)send_addr)->sin_addr.s_addr = htonl(INADDR_ANY);
+				((struct sockaddr_in *)send_addr)->sin_port = 0;
+				((struct sockaddr_in *)send_addr)->sin_family = AF_INET;
+				r = bind(sock, send_addr, *send_addr_len);
+				((struct sockaddr_in *)send_addr)->sin_addr.s_addr = ip;
 			}
-
-			in_addr_t ip = ((struct sockaddr_in *)send_addr)->sin_addr.s_addr;
-			((struct sockaddr_in *)send_addr)->sin_addr.s_addr = htonl(INADDR_ANY);
-			r = bind(sock, send_addr, *send_addr_len);
-			((struct sockaddr_in *)send_addr)->sin_addr.s_addr = ip;
+			else
+			{
+				struct in6_addr ip;
+				memcpy(&ip, &(((struct sockaddr_in6 *)send_addr)->sin6_addr), sizeof(struct in6_addr));
+				((struct sockaddr_in6 *)send_addr)->sin6_addr = in6addr_any;
+				((struct sockaddr_in6 *)send_addr)->sin6_port = 0;
+				((struct sockaddr_in6 *)send_addr)->sin6_family = AF_INET6;
+				r = bind(sock, send_addr, *send_addr_len);
+				memcpy(&(((struct sockaddr_in6 *)send_addr)->sin6_addr), &ip, sizeof(struct in6_addr));
+			}
 			if(r < 0)
 			{
-				CHIAKI_LOGE(regist->log, "Regist failed to bind socket");
-				goto connect_fail;
+				CHIAKI_LOGE(regist->log, "Regist failed to bind socket, trying next address...");
+				continue;
 			}
 		}
 		else
@@ -477,60 +606,108 @@ static chiaki_socket_t regist_search_connect(ChiakiRegist *regist, struct addrin
 			if(r < 0)
 			{
 #ifdef _WIN32
-				CHIAKI_LOGE(regist->log, "Regist connect failed, error %u", WSAGetLastError());
+				CHIAKI_LOGE(regist->log, "Regist connect failed, error %u. Trying next address...", WSAGetLastError());
 #else
 				int errsv = errno;
-				CHIAKI_LOGE(regist->log, "Regist connect failed: %s", strerror(errsv));
+				CHIAKI_LOGE(regist->log, "Regist connect failed, error: %s. Trying next address...", strerror(errsv));
 #endif
-				goto connect_fail;
+				continue;
 			}
 		}
+		connected = true;
 		break;
 
 connect_fail:
-		CHIAKI_SOCKET_CLOSE(sock);
-		sock = CHIAKI_INVALID_SOCKET;
+		if(!CHIAKI_SOCKET_IS_INVALID(sock))
+		{
+			CHIAKI_SOCKET_CLOSE(sock);
+			sock = CHIAKI_INVALID_SOCKET;
+		}
 	}
-
+	if(!connected)
+	{
+		CHIAKI_LOGI(regist->log, "Regist connect failed: tried all addresses");
+		if(!CHIAKI_SOCKET_IS_INVALID(sock))
+		{
+			CHIAKI_SOCKET_CLOSE(sock);
+			sock = CHIAKI_INVALID_SOCKET;
+		}
+	}
 	return sock;
 }
 
-static chiaki_socket_t regist_request_connect(ChiakiRegist *regist, const struct sockaddr *addr, size_t addr_len)
+static ChiakiErrorCode regist_request_connect(ChiakiRegist *regist, const struct sockaddr *addr, size_t addr_len, chiaki_socket_t *sock_out)
 {
-	chiaki_socket_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	chiaki_socket_t sock = socket(addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
 	if(CHIAKI_SOCKET_IS_INVALID(sock))
 	{
-		return CHIAKI_INVALID_SOCKET;
+		return CHIAKI_ERR_NETWORK;
 	}
 
-	int r = connect(sock, addr, addr_len);
-	if(r < 0)
+	ChiakiErrorCode err = chiaki_socket_set_nonblock(sock, true);
+	if(err != CHIAKI_ERR_SUCCESS)
 	{
-		int errsv = errno;
-#ifdef _WIN32
-		CHIAKI_LOGE(regist->log, "Regist connect failed: %u", WSAGetLastError());
-#else
-		CHIAKI_LOGE(regist->log, "Regist connect failed: %s", strerror(errsv));
-#endif
+		CHIAKI_LOGE(regist->log, "Regist failed to set request socket non-blocking: %s", chiaki_error_string(err));
 		CHIAKI_SOCKET_CLOSE(sock);
-		sock = CHIAKI_INVALID_SOCKET;
+		return err;
 	}
 
-	return sock;
+	err = chiaki_stop_pipe_connect(&regist->stop_pipe, sock, (struct sockaddr *)addr, addr_len, REGIST_REPONSE_TIMEOUT_MS);
+	if(err != CHIAKI_ERR_SUCCESS)
+	{
+		if(err == CHIAKI_ERR_CANCELED)
+		{
+			CHIAKI_LOGI(regist->log, "Regist canceled while connecting request socket");
+		}
+		else
+		{
+#ifdef _WIN32
+			CHIAKI_LOGE(regist->log, "Regist connect failed: %u", WSAGetLastError());
+#else
+			CHIAKI_LOGE(regist->log, "Regist connect failed: %s", chiaki_error_string(err));
+#endif
+		}
+		if(!CHIAKI_SOCKET_IS_INVALID(sock))
+		{
+			CHIAKI_SOCKET_CLOSE(sock);
+			sock = CHIAKI_INVALID_SOCKET;
+		}
+		return err;
+	}
+
+	*sock_out = sock;
+	return CHIAKI_ERR_SUCCESS;
 }
 
-static ChiakiErrorCode regist_recv_response(ChiakiRegist *regist, ChiakiRegisteredHost *host, chiaki_socket_t sock, ChiakiRPCrypt *rpcrypt)
+static ChiakiErrorCode regist_recv_response(ChiakiRegist *regist, ChiakiRegisteredHost *host, chiaki_socket_t sock, ChiakiRPCrypt *rpcrypt, uint16_t remote_counter, char *send_buf, size_t send_buf_size)
 {
-	uint8_t buf[0x200];
+	uint8_t buf[1500];
 	size_t buf_filled_size;
 	size_t header_size;
-	ChiakiErrorCode err = chiaki_recv_http_header(sock, (char *)buf, sizeof(buf), &header_size, &buf_filled_size, &regist->stop_pipe, REGIST_REPONSE_TIMEOUT_MS);
+	ChiakiErrorCode err;
+	if(regist->info.holepunch_info)
+	{
+		err = chiaki_send_recv_http_header_psn(regist->info.rudp, regist->log, &remote_counter, send_buf, send_buf_size, (char *)buf, sizeof(buf), &header_size, &buf_filled_size);
+		free(send_buf);
+	}
+	else
+		err = chiaki_recv_http_header(sock, (char *)buf, sizeof(buf), &header_size, &buf_filled_size, &regist->stop_pipe, REGIST_REPONSE_TIMEOUT_MS);
 	if(err == CHIAKI_ERR_CANCELED)
 		return err;
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		CHIAKI_LOGE(regist->log, "Regist failed to receive response HTTP header");
 		return err;
+	}
+
+	if(regist->info.holepunch_info)
+	{
+		RudpMessage message;
+		err = chiaki_rudp_send_recv(regist->info.rudp, &message, NULL, 0, remote_counter, ACK, FINISH, 0, 3);
+		if(err != CHIAKI_ERR_SUCCESS)
+			CHIAKI_LOGW(regist->log, "REGIST - Failed to finish rudp, continuing...");
+		else
+			chiaki_rudp_message_pointers_free(&message);
 	}
 
 	CHIAKI_LOGV(regist->log, "Regist response HTTP header:");
@@ -579,29 +756,58 @@ static ChiakiErrorCode regist_recv_response(ChiakiRegist *regist, ChiakiRegister
 		return CHIAKI_ERR_INVALID_RESPONSE;
 	}
 
-	if(content_size + header_size > sizeof(buf))
+	if(content_size > sizeof(buf) - header_size)
 	{
 		CHIAKI_LOGE(regist->log, "Regist response content too big");
 		return CHIAKI_ERR_BUF_TOO_SMALL;
 	}
 
-	while(buf_filled_size < content_size + header_size)
+	if(regist->info.holepunch_info)
 	{
-		err = chiaki_stop_pipe_select_single(&regist->stop_pipe, sock, false, REGIST_REPONSE_TIMEOUT_MS);
-		if(err != CHIAKI_ERR_SUCCESS)
+		if(buf_filled_size < content_size + header_size)
 		{
-			if(err == CHIAKI_ERR_TIMEOUT)
-				CHIAKI_LOGE(regist->log, "Regist timed out receiving response content");
-			return err;
-		}
-
-		int received = recv(sock, buf + buf_filled_size, (content_size + header_size) - buf_filled_size, 0);
-		if(received <= 0)
-		{
-			CHIAKI_LOGE(regist->log, "Regist failed to receive response content");
+			CHIAKI_LOGE(regist->log, "Received %zu which is less than content + header of size %zu", buf_filled_size, content_size + header_size);
 			return CHIAKI_ERR_NETWORK;
 		}
-		buf_filled_size += received;
+	}
+	else
+	{
+		uint64_t deadline_ms = chiaki_time_now_monotonic_ms() + REGIST_REPONSE_TIMEOUT_MS;
+		while(buf_filled_size < content_size + header_size)
+		{
+			uint64_t now_ms = chiaki_time_now_monotonic_ms();
+			if(now_ms >= deadline_ms)
+			{
+				CHIAKI_LOGE(regist->log, "Regist timed out receiving response content");
+				return CHIAKI_ERR_TIMEOUT;
+			}
+			err = chiaki_stop_pipe_select_single(&regist->stop_pipe, sock, false, deadline_ms - now_ms);
+			if(err != CHIAKI_ERR_SUCCESS)
+			{
+				if(err == CHIAKI_ERR_TIMEOUT)
+					CHIAKI_LOGE(regist->log, "Regist timed out receiving response content");
+				return err;
+			}
+
+			CHIAKI_SSIZET_TYPE received = recv(sock,  (CHIAKI_SOCKET_BUF_TYPE)buf + buf_filled_size, (content_size + header_size) - buf_filled_size, 0);
+			if(received < 0)
+			{
+#ifdef _WIN32
+				int recv_err = WSAGetLastError();
+				if(recv_err == WSAEWOULDBLOCK)
+					continue;
+#else
+				if(errno == EAGAIN || errno == EWOULDBLOCK)
+					continue;
+#endif
+			}
+			if(received <= 0)
+			{
+				CHIAKI_LOGE(regist->log, "Regist failed to receive response content");
+				return CHIAKI_ERR_NETWORK;
+			}
+			buf_filled_size += received;
+		}
 	}
 
 	uint8_t *payload = buf + header_size;
@@ -707,6 +913,11 @@ static ChiakiErrorCode regist_parse_response_payload(ChiakiRegist *regist, Chiak
 			{
 				mac_found = true;
 			}
+		}
+		else if(strcmp(header->key, "RP-SupportCmd") == 0)
+		{
+			uint32_t support_cmd = (uint32_t)strtoul(header->value, NULL, 0);
+			CHIAKI_LOGI(regist->log, "RP-Support Cmd: %"PRIu32, support_cmd);
 		}
 		else
 		{

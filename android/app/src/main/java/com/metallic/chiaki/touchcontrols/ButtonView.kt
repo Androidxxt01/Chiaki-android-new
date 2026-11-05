@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +17,8 @@ class ButtonView @JvmOverloads constructor(
 	context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr)
 {
+	private val haptics = ButtonHaptics(context)
+
 	var buttonPressed = false
 		private set(value)
 		{
@@ -23,6 +26,8 @@ class ButtonView @JvmOverloads constructor(
 			field = value
 			if(diff)
 			{
+				if(value)
+					haptics.trigger()
 				invalidate()
 				buttonPressedCallback?.let { it(field) }
 			}
@@ -71,14 +76,16 @@ class ButtonView @JvmOverloads constructor(
 
 	override fun onTouchEvent(event: MotionEvent): Boolean
 	{
-		when(event.action)
+		when(event.actionMasked)
 		{
-			MotionEvent.ACTION_DOWN -> {
-				if(bestFittingTouchView(event.x, event.y) != this)
+			MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+				if(bestFittingTouchView(event.getX(event.actionIndex), event.getY(event.actionIndex)) != this)
 					return false
 				buttonPressed = true
 			}
-			MotionEvent.ACTION_UP -> buttonPressed = false
+			MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+				buttonPressed = false
+			}
 		}
 		return true
 	}

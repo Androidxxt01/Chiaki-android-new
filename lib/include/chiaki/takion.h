@@ -27,7 +27,8 @@ extern "C" {
 typedef enum chiaki_takion_message_data_type_t {
 	CHIAKI_TAKION_MESSAGE_DATA_TYPE_PROTOBUF = 0,
 	CHIAKI_TAKION_MESSAGE_DATA_TYPE_RUMBLE = 7,
-	CHIAKI_TAKION_MESSAGE_DATA_TYPE_9 = 9
+	CHIAKI_TAKION_MESSAGE_DATA_TYPE_PAD_INFO = 9,
+	CHIAKI_TAKION_MESSAGE_DATA_TYPE_TRIGGER_EFFECTS = 11,
 } ChiakiTakionMessageDataType;
 
 typedef struct chiaki_takion_av_packet_t
@@ -36,6 +37,7 @@ typedef struct chiaki_takion_av_packet_t
 	ChiakiSeqNum16 frame_index;
 	bool uses_nalu_info_structs;
 	bool is_video;
+	bool is_haptics;
 	ChiakiSeqNum16 unit_index;
 	uint16_t units_in_frame_total; // source + units_in_frame_fec
 	uint16_t units_in_frame_fec;
@@ -45,8 +47,6 @@ typedef struct chiaki_takion_av_packet_t
 	uint8_t byte_at_0x2c;
 
 	uint64_t key_pos;
-
-	uint8_t byte_before_audio_data;
 
 	uint8_t *data; // not owned
 	size_t data_size;
@@ -73,6 +73,13 @@ typedef enum {
 	CHIAKI_TAKION_EVENT_TYPE_DATA_ACK,
 	CHIAKI_TAKION_EVENT_TYPE_AV
 } ChiakiTakionEventType;
+
+typedef enum {
+	CHIAKI_NONE_DISABLED = 0,  //(bits: 00)
+	CHIAKI_AUDIO_DISABLED = 1, //(bits: 01)
+	CHIAKI_VIDEO_DISABLED = 2, //(bits: 10)
+	CHIAKI_AUDIO_VIDEO_DISABLED = 3 //(bits: 11)
+} ChiakiDisableAudioVideo;
 
 typedef struct chiaki_takion_event_t
 {
@@ -105,8 +112,11 @@ typedef struct chiaki_takion_connect_info_t
 	bool ip_dontfrag;
 	ChiakiTakionCallback cb;
 	void *cb_user;
+	ChiakiDisableAudioVideo disable_audio_video;
 	bool enable_crypt;
+	bool enable_dualsense;
 	uint8_t protocol_version;
+	bool close_socket; // close socket when finishing takion
 } ChiakiTakionConnectInfo;
 
 
@@ -115,6 +125,8 @@ typedef struct chiaki_takion_t
 	ChiakiLog *log;
 	uint8_t version;
 
+	// Whether or not audio or video is disabled from further processing beyond basic ack
+	ChiakiDisableAudioVideo disable_audio_video;
 	/**
 	 * Whether encryption should be used.
 	 *
@@ -141,7 +153,17 @@ typedef struct chiaki_takion_t
 	ChiakiGKCrypt *gkcrypt_remote; // if NULL (default), remote gmacs are IGNORED (!) and everything is expected to be unencrypted
 
 	ChiakiReorderQueue data_queue;
+	ChiakiReorderQueue video_queue;
+	bool video_queue_initialized;
+	int64_t video_queue_head_wait_start_us;
+	uint64_t video_queue_head_wait_seq_num;
 	ChiakiTakionSendBuffer send_buffer;
+	/**
+	 * send_buffer only exists from the end of the handshake until the receive loop ends.
+	 * Senders may only push into it while send_buffer_active is true.
+	 */
+	bool send_buffer_active;
+	ChiakiMutex send_buffer_active_mutex;
 
 	ChiakiTakionCallback cb;
 	void *cb_user;
@@ -150,6 +172,7 @@ typedef struct chiaki_takion_t
 	ChiakiStopPipe stop_pipe;
 	uint32_t tag_local;
 	uint32_t tag_remote;
+	bool close_socket;
 
 	ChiakiSeqNum32 seq_num_local;
 	ChiakiMutex seq_num_local_mutex;
@@ -162,10 +185,12 @@ typedef struct chiaki_takion_t
 	ChiakiTakionAVPacketParse av_packet_parse;
 
 	ChiakiKeyState key_state;
+
+	bool enable_dualsense;
 } ChiakiTakion;
 
 
-CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, ChiakiTakionConnectInfo *info);
+CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, ChiakiTakionConnectInfo *info, chiaki_socket_t *sock);
 CHIAKI_EXPORT void chiaki_takion_close(ChiakiTakion *takion);
 
 /**
@@ -211,6 +236,13 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_message_data(ChiakiTakion *taki
 
 /**
  * Thread-safe while Takion is running.
+ *
+ * @param optional pointer to write the sequence number of the sent packet to
+ */
+CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_message_data_cont(ChiakiTakion *takion, uint8_t chunk_flags, uint16_t channel, uint8_t *buf, size_t buf_size, ChiakiSeqNum32 *seq_num);
+
+/**
+ * Thread-safe while Takion is running.
  */
 CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_congestion(ChiakiTakion *takion, ChiakiTakionCongestionPacket *packet);
 
@@ -219,10 +251,12 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_congestion(ChiakiTakion *takion
  */
 CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_feedback_state(ChiakiTakion *takion, ChiakiSeqNum16 seq_num, ChiakiFeedbackState *feedback_state);
 
+CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_mic_packet(ChiakiTakion *takion, uint8_t *audio_packet, size_t packet_size, bool ps5);
 /**
  * Thread-safe while Takion is running.
+ * @param event_count number of history events contained in payload
  */
-CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_feedback_history(ChiakiTakion *takion, ChiakiSeqNum16 seq_num, uint8_t *payload, size_t payload_size);
+CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_send_feedback_history(ChiakiTakion *takion, ChiakiSeqNum16 seq_num, uint8_t event_count, uint8_t *payload, size_t payload_size);
 
 #define CHIAKI_TAKION_V9_AV_HEADER_SIZE_VIDEO 0x17
 #define CHIAKI_TAKION_V9_AV_HEADER_SIZE_AUDIO 0x12

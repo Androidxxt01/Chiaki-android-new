@@ -20,12 +20,20 @@ extern "C" {
 #ifdef __GNUC__
 typedef uint32_t chiaki_unaligned_uint32_t __attribute__((aligned(1)));
 typedef uint16_t chiaki_unaligned_uint16_t __attribute__((aligned(1)));
+typedef int16_t chiaki_unaligned_int16_t __attribute__((aligned(1)));
 #else
 typedef uint32_t chiaki_unaligned_uint32_t;
 typedef uint16_t chiaki_unaligned_uint16_t;
+typedef int16_t chiaki_unaligned_int16_t;
 #endif
 
 #define CHIAKI_EXPORT
+
+#ifdef _WIN32
+#define CHIAKI_SSIZET_TYPE int
+#else
+#define CHIAKI_SSIZET_TYPE ssize_t
+#endif
 
 #define CHIAKI_NEW(t) ((t*)malloc(sizeof(t)))
 
@@ -51,7 +59,8 @@ typedef enum
 	CHIAKI_ERR_INVALID_MAC,
 	CHIAKI_ERR_UNINITIALIZED,
 	CHIAKI_ERR_FEC_FAILED,
-	CHIAKI_ERR_VERSION_MISMATCH
+	CHIAKI_ERR_VERSION_MISMATCH,
+	CHIAKI_ERR_HTTP_NONOK
 } ChiakiErrorCode;
 
 CHIAKI_EXPORT const char *chiaki_error_string(ChiakiErrorCode code);

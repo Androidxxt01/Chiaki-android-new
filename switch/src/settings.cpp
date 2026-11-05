@@ -7,9 +7,9 @@
 Settings::Settings()
 {
 #if defined(__SWITCH__)
-	chiaki_log_init(&this->log, CHIAKI_LOG_ALL ^ CHIAKI_LOG_VERBOSE ^ CHIAKI_LOG_DEBUG, chiaki_log_cb_print, NULL);
+	chiaki_log_init(&this->log, CHIAKI_LOG_ALL & ~(CHIAKI_LOG_VERBOSE | CHIAKI_LOG_DEBUG), chiaki_log_cb_print, NULL);
 #else
-	chiaki_log_init(&this->log, CHIAKI_LOG_ALL, chiaki_log_cb_print, NULL);
+	chiaki_log_init(&this->log, CHIAKI_LOG_ALL & ~CHIAKI_LOG_VERBOSE, chiaki_log_cb_print, NULL);
 #endif
 }
 
@@ -78,6 +78,7 @@ Host *Settings::GetOrCreateHost(std::string *host_name)
 		this->SetPSNAccountID(host, this->global_psn_account_id);
 		this->SetVideoResolution(host, this->global_video_resolution);
 		this->SetVideoFPS(host, this->global_video_fps);
+		this->SetHaptic(host, this->global_haptic);
 	}
 	return host;
 }
@@ -154,6 +155,9 @@ void Settings::ParseFile()
 				case VIDEO_FPS:
 					this->SetVideoFPS(current_host, value);
 					break;
+				case HAPTIC:
+					this->SetHaptic(current_host, value);
+					break;
 				case TARGET:
 					CHIAKI_LOGV(&this->log, "TARGET %s", value.c_str());
 					if(current_host != nullptr)
@@ -194,6 +198,10 @@ int Settings::WriteFile()
 						<< this->FPSPresetToString(this->GetVideoFPS(nullptr))
 						<< "\n";
 
+		if(this->global_haptic)
+			config_file << "haptic = "
+						<< std::to_string(this->GetHaptic(nullptr))
+						<< "\n";
 		if(this->global_psn_online_id.length())
 			config_file << "psn_online_id = \"" << this->global_psn_online_id << "\"\n";
 
@@ -237,6 +245,9 @@ int Settings::WriteFile()
 							<< "rp_regist_key = \"" << this->GetHostRPRegistKey(&it->second) << "\"\n"
 							<< "rp_key_type = " << rp_key_type << "\n";
 			}
+			config_file << "haptic = "
+						<< std::to_string(this->GetHaptic(&it->second))
+						<< "\n";
 
 			config_file << "\n";
 		} // for host
@@ -351,6 +362,17 @@ std::string Settings::GetHostAddr(Host *host)
 	return "";
 }
 
+void Settings::SetHostAddr(Host * host, std::string host_addr)
+{
+    if (host == nullptr)
+    {
+        CHIAKI_LOGE(&this->log, "Cannot SetHostAddr on nullptr host");
+        return;
+    }
+	
+    host->host_addr = host_addr;
+}
+
 std::string Settings::GetPSNOnlineID(Host *host)
 {
 	if(host == nullptr || host->psn_online_id.length() == 0)
@@ -419,6 +441,34 @@ void Settings::SetVideoFPS(Host *host, ChiakiVideoFPSPreset value)
 		this->global_video_fps = value;
 	else
 		host->video_fps = value;
+}
+HapticPreset Settings::GetHaptic(Host *host)
+{
+	if(host == nullptr) return this->global_haptic;
+	if (host->haptic == 0) {
+		return HAPTIC_PRESET_DIABLED;
+	} else if (host->haptic == 1) {
+		return HAPTIC_PRESET_WEAK;
+	}
+	return HAPTIC_PRESET_STRONG;
+}
+
+void Settings::SetHaptic(Host *host, HapticPreset value)
+{
+	if(host == nullptr)
+		this->global_haptic = value;
+	else
+		host->haptic = value;
+}
+void Settings::SetHaptic(Host *host, std::string value)
+{
+	HapticPreset result = HAPTIC_PRESET_DIABLED;
+	if (value == "1") {
+		result = HAPTIC_PRESET_WEAK;
+	} else if (value == "2") {
+		result = HAPTIC_PRESET_STRONG;
+	}
+	SetHaptic(host, result);
 }
 
 void Settings::SetVideoFPS(Host *host, std::string value)

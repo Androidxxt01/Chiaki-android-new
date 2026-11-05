@@ -19,6 +19,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		val controllerState = sensorControllerState or keyControllerState or motionControllerState
 
 		val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+		@Suppress("DEPRECATION")
 		when(windowManager.defaultDisplay.rotation)
 		{
 			Surface.ROTATION_90 -> {
@@ -85,7 +86,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
 	}
 
-	private val lifecycleObserver = object: LifecycleObserver {
+	private val motionLifecycleObserver = object: LifecycleObserver {
 		@OnLifecycleEvent(Lifecycle.Event.ON_RESUME)
 		fun onResume()
 		{
@@ -110,7 +111,8 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	fun observe(lifecycleOwner: LifecycleOwner)
 	{
-		lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+		if(preferences.motionEnabled)
+			lifecycleOwner.lifecycle.addObserver(motionLifecycleObserver)
 	}
 
 	private fun controllerStateUpdated()
@@ -175,7 +177,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 	{
 		if(event.source and InputDevice.SOURCE_CLASS_JOYSTICK != InputDevice.SOURCE_CLASS_JOYSTICK)
 			return false
-		fun Float.signedAxis() = (this * Short.MAX_VALUE).toShort()
+		fun Float.signedAxis() = (this * Short.MAX_VALUE).toInt().toShort()
 		fun Float.unsignedAxis() = (this * UByte.MAX_VALUE.toFloat()).toUInt().toUByte()
 		motionControllerState.leftX = event.getAxisValue(MotionEvent.AXIS_X).signedAxis()
 		motionControllerState.leftY = event.getAxisValue(MotionEvent.AXIS_Y).signedAxis()

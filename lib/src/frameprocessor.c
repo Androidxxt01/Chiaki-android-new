@@ -29,10 +29,12 @@ CHIAKI_EXPORT void chiaki_stream_stats_frame(ChiakiStreamStats *stats, uint64_t 
 
 CHIAKI_EXPORT uint64_t chiaki_stream_stats_bitrate(ChiakiStreamStats *stats, uint64_t framerate)
 {
+	if (stats->frames == 0)
+		return 0;
 	return (stats->bytes * 8 * framerate) / stats->frames;
 }
 
-#define UNIT_SLOTS_MAX 256
+#define UNIT_SLOTS_MAX 512
 
 struct chiaki_frame_unit_t
 {
@@ -147,7 +149,13 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_frame_processor_alloc_frame(ChiakiFrameProc
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_frame_processor_put_unit(ChiakiFrameProcessor *frame_processor, ChiakiTakionAVPacket *packet)
 {
-	if(packet->unit_index > frame_processor->unit_slots_size)
+	if(packet->unit_index >= packet->units_in_frame_total)
+	{
+		CHIAKI_LOGE(frame_processor->log, "Packet's unit index is outside frame unit count");
+		return CHIAKI_ERR_INVALID_DATA;
+	}
+
+	if(packet->unit_index >= frame_processor->unit_slots_size)
 	{
 		CHIAKI_LOGE(frame_processor->log, "Packet's unit index is too high");
 		return CHIAKI_ERR_INVALID_DATA;
