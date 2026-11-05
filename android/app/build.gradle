@@ -35,8 +35,11 @@ android {
                 arguments "-DCHIAKI_ENABLE_TESTS=OFF",
                         "-DCHIAKI_ENABLE_CLI=OFF",
                         "-DCHIAKI_ENABLE_GUI=OFF",
+                        "-DCHIAKI_ENABLE_BOREALIS=OFF",
                         "-DCHIAKI_ENABLE_SETSU=OFF",
                         "-DCHIAKI_ENABLE_ANDROID=ON",
+                        "-DCHIAKI_USE_SYSTEM_NANOPB=OFF",
+                        "-DCHIAKI_USE_SYSTEM_JERASURE=OFF",
                         "-DCHIAKI_ENABLE_FFMPEG_DECODER=OFF",
                         "-DCHIAKI_ENABLE_PI_DECODER=OFF",
                         "-DCHIAKI_LIB_ENABLE_OPUS=OFF",
@@ -70,7 +73,7 @@ android {
     externalNativeBuild {
         cmake {
             version "3.22.1"
-            path rootCMakeLists
+            path file("../../CMakeLists.txt")
         }
     }
 
