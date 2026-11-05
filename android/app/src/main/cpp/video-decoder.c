@@ -65,9 +65,12 @@ void android_chiaki_video_decoder_set_surface(AndroidChiakiVideoDecoder *decoder
 	{
 		if(decoder->codec)
 		{
+			chiaki_mutex_unlock(&decoder->codec_mutex);
 			kill_decoder(decoder);
 			CHIAKI_LOGI(decoder->log, "Decoder shut down after surface was removed");
+			return;
 		}
+		chiaki_mutex_unlock(&decoder->codec_mutex);
 		return;
 	}
 
