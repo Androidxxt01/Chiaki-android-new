@@ -18,6 +18,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Inspect submodules
+        run: |
+          git submodule status
+          ls third-party/nanopb | head
+          ls third-party/jerasure | head
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -31,7 +37,16 @@ jobs:
 
       - name: Assemble debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee build.log
+
+      - name: Show CMake errors
+        if: failure()
+        working-directory: android
+        run: |
+          grep -n -A12 'CMake Error' build.log | head -80
+          grep -rn -A12 'CMake Error' app/.cxx --include='*.log' | head -80
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

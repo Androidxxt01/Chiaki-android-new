@@ -68,6 +68,11 @@ if (NOT CHIAKI_IS_SWITCH)
 		set(CURL_DISABLE_INSTALL ON)
 		set(HTTP_ONLY ON)
 		set(ENABLE_WEBSOCKETS ON)
+		# Android's NDK toolchain has no system nghttp2 package. HTTP/2 is not
+		# required by Chiaki's PSN or remote-play HTTP/WebSocket requests.
+		if(CHIAKI_ENABLE_ANDROID)
+			set(USE_NGHTTP2 OFF)
+		endif()
 		set(CHIAKI_CURL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/curl")
 	if(WIN32)
 		include("${PROJECT_SOURCE_DIR}/cmake/CurlSchannelAia.cmake")
