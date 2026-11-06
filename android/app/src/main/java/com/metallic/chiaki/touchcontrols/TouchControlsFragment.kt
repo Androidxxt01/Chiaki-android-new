@@ -18,6 +18,7 @@ import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
+import com.metallic.chiaki.R
 import com.metallic.chiaki.databinding.FragmentControlsBinding
 import com.metallic.chiaki.lib.ControllerState
 import kotlinx.coroutines.flow.Flow
