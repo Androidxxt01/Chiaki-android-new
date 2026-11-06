@@ -109,6 +109,11 @@ class StreamActivity : AppCompatActivity()
 			viewModel.setTouchpadOnlyEnabled(isChecked)
 			showOverlay()
 		}
+		binding.controlLayoutButton.setOnClickListener {
+			(supportFragmentManager.findFragmentById(R.id.controlsFragment) as? DefaultTouchControlsFragment)
+				?.openControlLayoutEditor()
+			showOverlay()
+		}
 
 		binding.displayModeToggle.addOnButtonCheckedListener { _, _, _ ->
 			adjustStreamViewAspect()

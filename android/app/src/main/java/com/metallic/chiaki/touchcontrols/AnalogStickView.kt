@@ -18,8 +18,13 @@ class AnalogStickView @JvmOverloads constructor(
 	context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr)
 {
-	val radius: Float
-	private val handleRadius: Float
+	var radius: Float
+		private set
+	private var handleRadius: Float = 0f
+	private var baseRadius: Float = 0f
+	private var baseHandleRadius: Float = 0f
+	private var initialWidth = 0
+	private var initialHeight = 0
 	private val drawableBase: Drawable?
 	private val drawableHandle: Drawable?
 
@@ -48,12 +53,24 @@ class AnalogStickView @JvmOverloads constructor(
 	init
 	{
 		context.theme.obtainStyledAttributes(attrs, R.styleable.AnalogStickView, 0, 0).apply {
-			radius = getDimension(R.styleable.AnalogStickView_radius, 0f)
-			handleRadius = getDimension(R.styleable.AnalogStickView_handleRadius, 0f)
+			baseRadius = getDimension(R.styleable.AnalogStickView_radius, 0f)
+			baseHandleRadius = getDimension(R.styleable.AnalogStickView_handleRadius, 0f)
+			radius = baseRadius
+			handleRadius = baseHandleRadius
 			drawableBase = getDrawable(R.styleable.AnalogStickView_drawableBase)
 			drawableHandle = getDrawable(R.styleable.AnalogStickView_drawableHandle)
 			recycle()
 		}
+	}
+
+	override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int)
+	{
+		super.onSizeChanged(w, h, oldw, oldh)
+		if (initialWidth == 0 || initialHeight == 0) { initialWidth = w; initialHeight = h }
+		val scale = minOf(w.toFloat() / initialWidth.coerceAtLeast(1), h.toFloat() / initialHeight.coerceAtLeast(1))
+		radius = baseRadius * scale
+		handleRadius = baseHandleRadius * scale
+		invalidate()
 	}
 
 	override fun onDraw(canvas: Canvas)
