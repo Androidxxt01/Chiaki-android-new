@@ -166,15 +166,23 @@ class DefaultTouchControlsFragment : TouchControlsFragment()
 		activeProfile = default; applyLayout(); saveLayout(); Toast.makeText(requireContext(), "Layout padrão restaurado", Toast.LENGTH_SHORT).show()
 	}
 
-	private fun enterEditMode() {
+	fun enterEditMode() {
 		if (editing) return
+		if (binding.root.width == 0 || binding.root.height == 0) {
+			binding.root.post { enterEditMode() }
+			return
+		}
 		editing = true
 		Toast.makeText(requireContext(), "Arraste os controles; redimensione pelo canto inferior direito.", Toast.LENGTH_LONG).show()
 		controlViews.forEach { (key, control) ->
 			control.setOnTouchListener { target, event ->
 				if (!editing) return@setOnTouchListener false
 				when (event.actionMasked) {
-					MotionEvent.ACTION_DOWN -> { target.setTag(R.id.virtual_control_edit_touch, floatArrayOf(event.rawX, event.rawY, rootX(target), rootY(target), target.width.toFloat(), target.height.toFloat(), if (event.x > target.width * .72f && event.y > target.height * .72f) 1f else 0f)); true }
+					MotionEvent.ACTION_DOWN -> {
+						(target.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
+						target.setTag(R.id.virtual_control_edit_touch, floatArrayOf(event.rawX, event.rawY, rootX(target), rootY(target), target.width.toFloat(), target.height.toFloat(), if (event.x > target.width * .72f && event.y > target.height * .72f) 1f else 0f))
+						true
+					}
 					MotionEvent.ACTION_MOVE -> {
 						val data = target.getTag(R.id.virtual_control_edit_touch) as? FloatArray ?: return@setOnTouchListener true
 						val dx = event.rawX - data[0]; val dy = event.rawY - data[1]
@@ -183,7 +191,11 @@ class DefaultTouchControlsFragment : TouchControlsFragment()
 						} else { setRootPosition(target, (data[2] + dx).coerceIn(binding.root.paddingLeft.toFloat(), (binding.root.width - binding.root.paddingRight - target.width).toFloat().coerceAtLeast(0f)), (data[3] + dy).coerceIn(binding.root.paddingTop.toFloat(), (binding.root.height - binding.root.paddingBottom - target.height).toFloat().coerceAtLeast(0f))) }
 						true
 					}
-					MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { savePositions(); true }
+					MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+						savePositions()
+						(target.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(false)
+						true
+					}
 					else -> true
 				}
 			}
@@ -202,7 +214,7 @@ class DefaultTouchControlsFragment : TouchControlsFragment()
 			override fun onStopTrackingTouch(seekBar: SeekBar?) { saveLayout() }
 		}) }
 		val restore = Button(requireContext()).apply { text = "Padrão"; setOnClickListener { restoreDefault() } }
-		val done = Button(requireContext()).apply { text = "Concluir"; setOnClickListener { savePositions(); editing = false; controlViews.forEach { it.second.setOnTouchListener(null) }; (binding.root as ViewGroup).removeView(bar); editBar = null } }
+		val done = Button(requireContext()).apply { text = "Concluir"; setOnClickListener { savePositions(); editing = false; controlViews.forEach { it.second.setOnTouchListener(null) }; (binding.root as ViewGroup).removeView(bar); editBar = null; (activity as? androidx.appcompat.app.AppCompatActivity)?.finish() } }
 		bar.addView(profileButton); bar.addView(opacity, LinearLayout.LayoutParams(dp(130), dp(48))); bar.addView(restore); bar.addView(done)
 		val lp = ConstraintLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topToTop = ConstraintLayout.LayoutParams.PARENT_ID; startToStart = ConstraintLayout.LayoutParams.PARENT_ID; endToEnd = ConstraintLayout.LayoutParams.PARENT_ID; topMargin = dp(12) }
 		(binding.root as ViewGroup).addView(bar, lp); editBar = bar
