@@ -7,6 +7,7 @@ import android.content.res.Resources
 import android.os.Bundle
 import android.view.View
 import androidx.fragment.app.Fragment
+import com.metallic.chiaki.R
 
 class SettingsTouchControlsFragment : Fragment(), TitleFragment
 {
