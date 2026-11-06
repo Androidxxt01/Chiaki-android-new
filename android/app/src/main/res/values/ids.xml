@@ -1,0 +1,4 @@
+<resources>
+    <item name="virtual_control_edit_touch" type="id" />
+    <item name="settings_touch_controls_container" type="id" />
+</resources>

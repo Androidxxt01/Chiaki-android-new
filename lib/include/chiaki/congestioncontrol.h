@@ -17,9 +17,11 @@ typedef struct chiaki_congestion_control_t
 	ChiakiPacketStats *stats;
 	ChiakiThread thread;
 	ChiakiBoolPredCond stop_cond;
+	double packet_loss;
+	double packet_loss_max;
 } ChiakiCongestionControl;
 
-CHIAKI_EXPORT ChiakiErrorCode chiaki_congestion_control_start(ChiakiCongestionControl *control, ChiakiTakion *takion, ChiakiPacketStats *stats);
+CHIAKI_EXPORT ChiakiErrorCode chiaki_congestion_control_start(ChiakiCongestionControl *control, ChiakiTakion *takion, ChiakiPacketStats *stats, double packet_loss_max);
 
 /**
  * Stop control and join the thread

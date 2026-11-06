@@ -2,6 +2,10 @@
 
 #include "gui.h"
 #include <chiaki/log.h>
+#include "views/enter_pin_view.h"
+#include "views/ps_remote_play.h"
+
+
 
 #define SCREEN_W 1280
 #define SCREEN_H 720
@@ -23,6 +27,7 @@ HostInterface::HostInterface(Host *host)
 	: host(host)
 {
 	this->settings = Settings::GetInstance();
+	this->log = this->settings->GetLogger();
 	this->io = IO::GetInstance();
 
 	brls::ListItem *connect = new brls::ListItem("Connect");
@@ -42,6 +47,8 @@ HostInterface::HostInterface(Host *host)
 	// when the host is connected
 	this->host->SetEventConnectedCallback(std::bind(&HostInterface::Stream, this));
 	this->host->SetEventQuitCallback(std::bind(&HostInterface::CloseStream, this, std::placeholders::_1));
+	// push login pin view onto the stack in callback fn
+	this->host->SetEventLoginPinRequestCallback(std::bind(&HostInterface::EnterPin, this, std::placeholders::_1));
 	// allow host to update controller state
 	this->host->SetEventRumbleCallback(std::bind(&IO::SetRumble, this->io, std::placeholders::_1, std::placeholders::_2));
 	this->host->SetReadControllerCallback(std::bind(&IO::UpdateControllerState, this->io, std::placeholders::_1, std::placeholders::_2));
@@ -138,18 +145,18 @@ void HostInterface::Wakeup(brls::View *view)
 	if(!this->host->HasRPkey())
 	{
 		// the host is not registered yet
-		DIALOG(prypf, "Please register your PlayStation first");
+		this->Register();
 	}
 	else
 	{
 		int r = host->Wakeup();
 		if(r == 0)
 		{
-			brls::Application::notify("PlayStation Wakeup packet sent");
+			brls::Application::notify("Wakeup packet sent to PlayStation");
 		}
 		else
 		{
-			brls::Application::notify("PlayStation Wakeup packet failed");
+			brls::Application::notify("Wakeup packet sent, no response from PlayStation");
 		}
 	}
 }
@@ -168,7 +175,7 @@ void HostInterface::Connect(brls::View *view)
 	if(this->host->IsDiscovered() && !this->host->IsReady())
 	{
 		// host in standby mode
-		DIALOG(ptoyp, "Please turn on your PlayStation");
+		DIALOG(ptoyp, "Your PlayStation is off, please turn it on");
 		return;
 	}
 
@@ -192,6 +199,7 @@ void HostInterface::ConnectSession()
 
 	// connect host sesssion
 	this->host->InitSession(this->io);
+	CHIAKI_LOGI(this->log, "Session initiated");
 	this->host->StartSession();
 }
 
@@ -237,6 +245,19 @@ void HostInterface::CloseStream(ChiakiQuitEvent *quit)
 	Disconnect();
 }
 
+void HostInterface::EnterPin(bool isError) 
+{
+	// enter pin callback,
+	// inputs were blocked in ConnectSession
+	brls::Application::unblockInputs();
+	// if this is triggered as a result 
+	if(isError){
+		brls::Application::notify("Wrong PIN");
+	}
+	
+	brls::Application::pushView(new EnterPinView(this->host, isError));
+}
+
 MainApplication::MainApplication(DiscoveryManager *discoverymanager)
 	: discoverymanager(discoverymanager)
 {
@@ -267,51 +288,50 @@ bool MainApplication::Load()
 
 	// init chiaki gl after borealis
 	// let borealis manage the main screen/window
-	if(!io->InitVideo(0, 0, SCREEN_W, SCREEN_H))
-	{
-		brls::Logger::error("Failed to initiate Video");
-	}
+	// if(!io->InitVideo(0, 0, SCREEN_W, SCREEN_H))
+	// {
+	// 	brls::Logger::error("Failed to initiate Video");
+	// }
 
-	brls::Logger::info("Load sdl/hid controller");
+	brls::Logger::info("Load SDL/HiD controller");
 	if(!io->InitController())
 	{
-		brls::Logger::error("Faled to initiate Controller");
+		brls::Logger::error("Failed to initiate Controller");
 	}
 
 	// Create a view
 	this->rootFrame = new brls::TabFrame();
-	this->rootFrame->setTitle("Chiaki: Open Source PlayStation Remote Play Client");
+	this->rootFrame->setTitle("Chiaki-ng: Open Source PlayStation Remote Play Client");
 	this->rootFrame->setIcon(BOREALIS_ASSET("icon.png"));
 
 	brls::List *config = new brls::List();
 	brls::List *add_host = new brls::List();
-
 	BuildConfigurationMenu(config);
 	BuildAddHostConfigurationMenu(add_host);
-	this->rootFrame->addTab("Configuration", config);
-	this->rootFrame->addTab("Add Host", add_host);
-	// ----------------
-	this->rootFrame->addSeparator();
-
-	// Add the root view to the stack
-	brls::Application::pushView(this->rootFrame);
 
 	std::map<std::string, Host> *hosts = this->settings->GetHostsMap();
-	while(brls::Application::mainLoop())
+	for (auto it = hosts->begin(); it != hosts->end(); ++it)
 	{
-		for(auto it = hosts->begin(); it != hosts->end(); it++)
+		if (this->host_menuitems.find(&it->second) == this->host_menuitems.end() &&
+		    (it->second.HasRPkey() || it->second.IsDiscovered()))
 		{
-			// add host to the gui only if the host is registered or discovered
-			if(this->host_menuitems.find(&it->second) == this->host_menuitems.end() && (it->second.HasRPkey() == true || it->second.IsDiscovered() == true))
-			{
-				HostInterface *new_host = new HostInterface(&it->second);
-				this->host_menuitems[&it->second] = new_host;
-				// create host if udefined
-				BuildConfigurationMenu(new_host, &it->second);
-				this->rootFrame->addTab(it->second.GetHostName().c_str(), new_host);
-			}
+		HostInterface *new_host = new HostInterface(&it->second);
+		this->host_menuitems[&it->second] = new_host;
+		BuildConfigurationMenu(new_host, &it->second);
+		this->rootFrame->addTab(it->second.GetHostName().c_str(), new_host);
 		}
 	}
+
+	// Static tabs under the registered targets
+	this->rootFrame->addSeparator();
+	this->rootFrame->addTab("Configuration", config);
+	this->rootFrame->addTab("Add Manual Host", add_host);
+
+	brls::Application::pushView(this->rootFrame);
+
+	while (brls::Application::mainLoop()) {
+	}
+	
 	return true;
 }
 
@@ -319,7 +339,7 @@ bool MainApplication::BuildConfigurationMenu(brls::List *ls, Host *host)
 {
 	std::string psn_account_id_string = this->settings->GetPSNAccountID(host);
 	brls::InputListItem *psn_account_id = new brls::InputListItem("PSN Account ID", psn_account_id_string,
-		"Account ID in base64 format", "PS5 or PS4 v7.0 and greater", CHIAKI_PSN_ACCOUNT_ID_SIZE * 2,
+		"Account ID in base64 format", "PS5 or PS4 System Software version 7.00 and greater", CHIAKI_PSN_ACCOUNT_ID_SIZE * 2,
 		brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_SPACE |
 			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_AT |
 			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_PERCENT |
@@ -333,6 +353,40 @@ bool MainApplication::BuildConfigurationMenu(brls::List *ls, Host *host)
 	};
 	psn_account_id->getClickEvent()->subscribe(psn_account_id_cb);
 	ls->addView(psn_account_id);
+
+	
+	brls::InputListItem *lookup_account_id = new brls::InputListItem("Lookup Account ID by username",
+		"", "PSN Account name", "Only works if the PSN account's privacy settings are set to public!", 16,
+		brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_SPACE |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_AT |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_PERCENT |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_FORWSLASH |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_BACKSLASH);
+
+	auto lookup_account_id_cb = [this, host, lookup_account_id, psn_account_id](brls::View *view) {
+		// lookup psn_online
+		std::string entered_value = lookup_account_id->getValue();
+		this->discoverymanager->makeRequest(entered_value, 
+			 [this, host, lookup_account_id, psn_account_id](const std::string& accountId) {
+				// retrieve, push and save setting
+				CHIAKI_LOGI(this->log, fmt::format("Found account id {}", accountId).c_str());
+				this->settings->SetPSNAccountID(host, std::string(accountId));
+				// write on disk
+				this->settings->WriteFile();
+				lookup_account_id->setValue("");
+				// set the view of the other field,
+				psn_account_id->setValue(std::string(accountId));
+			},
+			[this, lookup_account_id, entered_value](const std::string& error) {
+				CHIAKI_LOGE(this->log, error.c_str());
+				lookup_account_id->setValue("");
+				DIALOG(upaid, fmt::format("Unable to fetch account id for {}", entered_value));
+			}
+		);
+	};
+	lookup_account_id->getClickEvent()->subscribe(lookup_account_id_cb);
+	ls->addView(lookup_account_id);
+
 
 	std::string psn_online_id_string = this->settings->GetPSNOnlineID(host);
 	brls::InputListItem *psn_online_id = new brls::InputListItem("PSN Online ID",
@@ -352,35 +406,42 @@ bool MainApplication::BuildConfigurationMenu(brls::List *ls, Host *host)
 	psn_online_id->getClickEvent()->subscribe(psn_online_id_cb);
 	ls->addView(psn_online_id);
 
+
 	int value;
 	ChiakiVideoResolutionPreset resolution_preset = this->settings->GetVideoResolution(host);
 	switch(resolution_preset)
 	{
-		case CHIAKI_VIDEO_RESOLUTION_PRESET_720p:
+		case CHIAKI_VIDEO_RESOLUTION_PRESET_1080p:
 			value = 0;
 			break;
-		case CHIAKI_VIDEO_RESOLUTION_PRESET_540p:
+		case CHIAKI_VIDEO_RESOLUTION_PRESET_720p:
 			value = 1;
 			break;
-		case CHIAKI_VIDEO_RESOLUTION_PRESET_360p:
+		case CHIAKI_VIDEO_RESOLUTION_PRESET_540p:
 			value = 2;
+			break;
+		case CHIAKI_VIDEO_RESOLUTION_PRESET_360p:
+			value = 3;
 			break;
 	}
 
 	brls::SelectListItem *resolution = new brls::SelectListItem(
-		"Resolution", { "720p", "540p", "360p" }, value);
+		"Resolution", { "1080p (PS5 and PS4 Pro only)", "720p", "540p", "360p" }, value);
 
 	auto resolution_cb = [this, host](int result) {
 		ChiakiVideoResolutionPreset value = CHIAKI_VIDEO_RESOLUTION_PRESET_720p;
 		switch(result)
 		{
 			case 0:
-				value = CHIAKI_VIDEO_RESOLUTION_PRESET_720p;
+				value = CHIAKI_VIDEO_RESOLUTION_PRESET_1080p;
 				break;
 			case 1:
-				value = CHIAKI_VIDEO_RESOLUTION_PRESET_540p;
+				value = CHIAKI_VIDEO_RESOLUTION_PRESET_720p;
 				break;
 			case 2:
+				value = CHIAKI_VIDEO_RESOLUTION_PRESET_540p;
+				break;
+			case 3:
 				value = CHIAKI_VIDEO_RESOLUTION_PRESET_360p;
 				break;
 		}
@@ -402,7 +463,7 @@ bool MainApplication::BuildConfigurationMenu(brls::List *ls, Host *host)
 	}
 
 	brls::SelectListItem *fps = new brls::SelectListItem(
-		"FPS", { "60", "30" }, value);
+		"FPS", { "60fps", "30fps" }, value);
 
 	auto fps_cb = [this, host](int result) {
 		ChiakiVideoFPSPreset value = CHIAKI_VIDEO_FPS_PRESET_60;
@@ -422,22 +483,62 @@ bool MainApplication::BuildConfigurationMenu(brls::List *ls, Host *host)
 	fps->getValueSelectedEvent()->subscribe(fps_cb);
 	ls->addView(fps);
 
+	value = this->settings->GetHaptic(host);
+
+	brls::SelectListItem *haptic = new brls::SelectListItem(
+		"Haptics", { "Disabled", "Weak", "Strong" }, value);
+
+	auto haptic_cb = [this, host](int result) {
+		HapticPreset value = HAPTIC_PRESET_DIABLED;
+		switch(result)
+		{
+			case 0:
+				value = HAPTIC_PRESET_DIABLED;
+				break;
+			case 1:
+				value = HAPTIC_PRESET_WEAK;
+				break;
+			case 2:
+				value = HAPTIC_PRESET_STRONG;
+				break;
+		}
+		this->settings->SetHaptic(host, value);
+		this->settings->WriteFile();
+	};
+
+	haptic->getValueSelectedEvent()->subscribe(haptic_cb);
+	ls->addView(haptic);
+
 	if(host != nullptr)
-	{
-		// message delimiter
-		brls::Label *info = new brls::Label(brls::LabelStyle::REGULAR,
-			"Host information", true);
-		ls->addView(info);
-
-		std::string host_name_string = this->settings->GetHostName(host);
-		brls::ListItem *host_name = new brls::ListItem("PS Hostname");
-		host_name->setValue(host_name_string.c_str());
-		ls->addView(host_name);
-
-		std::string host_addr_string = settings->GetHostAddr(host);
-		brls::ListItem *host_addr = new brls::ListItem("PS Address");
-		host_addr->setValue(host_addr_string.c_str());
-		ls->addView(host_addr);
+	{	
+	    brls::Label *info = new brls::Label(brls::LabelStyle::REGULAR,
+		"Host information", true);
+	    ls->addView(info);
+	
+	    std::string host_name_string = this->settings->GetHostName(host);
+	    brls::ListItem *host_name = new brls::ListItem("PS Hostname");
+	    host_name->setValue(host_name_string.c_str());
+	    ls->addView(host_name);
+	
+	    std::string host_addr_string = settings->GetHostAddr(host);		
+		brls::InputListItem *host_addr = new brls::InputListItem("Remote IP/name",
+		host_addr_string, "IP address or fqdn", "", 255,
+		brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_SPACE |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_AT |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_PERCENT |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_FORWSLASH |
+			brls::KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_BACKSLASH);		
+		
+	    auto host_addr_cb = [this, host, host_addr](brls::View *view)
+		{
+			std::string new_addr = host_addr->getValue();	
+			this->settings->SetHostAddr(host, new_addr);	
+			this->settings->WriteFile();		
+			brls::Application::notify("PS Address updated successfully");
+	    };
+	
+	    host_addr->getClickEvent()->subscribe(host_addr_cb);
+	    ls->addView(host_addr);
 
 		brls::ListItem *host_regist_state_item = new brls::ListItem("Register Status");
 		host_regist_state_item->setValue(!settings->GetHostRPKey(host).empty() ? "registered" : "unregistered");
@@ -477,8 +578,8 @@ void MainApplication::BuildAddHostConfigurationMenu(brls::List *add_host)
 	// brls::ListItem* port = new brls::ListItem("Remote session port",  "tcp/udp 9295");
 	// brls::ListItem* port = new brls::ListItem("Remote stream port",  "udp 9296");
 	// brls::ListItem* port = new brls::ListItem("Remote Senkusha port",  "udp 9297");
-	brls::SelectListItem *ps_version = new brls::SelectListItem("PlayStation Version",
-		{ "PS5", "PS4 > 8", "7 < PS4 < 8", "PS4 < 7" });
+	brls::SelectListItem *ps_version = new brls::SelectListItem("Target PlayStation System",
+		{ "PS5", "PS4 System Version > 8.00", "7.00 < PS4 System Version < 8.00", "PS4 System Version < 7.00" }); //This may look like a pointless change but it does actually make things a bit clearer for the user
 	add_host->addView(ps_version);
 
 	brls::ListItem *register_host = new brls::ListItem("Register");
@@ -539,18 +640,3 @@ void MainApplication::BuildAddHostConfigurationMenu(brls::List *add_host)
 	add_host->addView(register_host);
 }
 
-PSRemotePlay::PSRemotePlay(Host *host)
-	: host(host)
-{
-	this->io = IO::GetInstance();
-}
-
-void PSRemotePlay::draw(NVGcontext *vg, int x, int y, unsigned width, unsigned height, brls::Style *style, brls::FrameContext *ctx)
-{
-	this->io->MainLoop();
-	this->host->SendFeedbackState();
-}
-
-PSRemotePlay::~PSRemotePlay()
-{
-}

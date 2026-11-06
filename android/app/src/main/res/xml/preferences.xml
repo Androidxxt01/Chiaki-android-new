@@ -13,6 +13,12 @@
             app:fragment="com.metallic.chiaki.settings.SettingsRegisteredHostsFragment"
             app:icon="@drawable/ic_console_simple"/>
 
+        <Preference
+            app:key="touch_controls"
+            app:title="@string/preferences_touch_controls_title"
+            app:fragment="com.metallic.chiaki.settings.SettingsTouchControlsFragment"
+            app:icon="@drawable/ic_gamepad"/>
+
         <SwitchPreference
             app:key="@string/preferences_swap_cross_moon_key"
             app:title="@string/preferences_swap_cross_moon_title"
@@ -24,6 +30,18 @@
             app:title="@string/preferences_rumble_enabled_title"
             app:summary="@string/preferences_rumble_enabled_summary"
             app:icon="@drawable/ic_rumble" />
+
+        <SwitchPreference
+            app:key="@string/preferences_motion_enabled_key"
+            app:title="@string/preferences_motion_enabled_title"
+            app:summary="@string/preferences_motion_enabled_summary"
+            app:icon="@drawable/ic_motion" />
+
+        <SwitchPreference
+            app:key="@string/preferences_button_haptic_enabled_key"
+            app:title="@string/preferences_button_haptic_enabled_title"
+            app:summary="@string/preferences_button_haptic_enabled_summary"
+            app:icon="@drawable/ic_button_haptic" />
 
         <SwitchPreference
             app:key="@string/preferences_log_verbose_key"

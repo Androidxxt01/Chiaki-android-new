@@ -1,7 +1,9 @@
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-apply plugin: 'kotlin-android-extensions'
-apply plugin: 'kotlin-kapt'
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'kotlin-parcelize'
+    id 'com.google.devtools.ksp'
+}
 
 def rootCMakeLists = "../../CMakeLists.txt"
 def rootCMakeListsContent = file(rootCMakeLists).text
@@ -18,42 +20,67 @@ def chiakiVersion = "$chiakiVersionMajor.$chiakiVersionMinor.$chiakiVersionPatch
 println("Determined Chiaki Version: $chiakiVersion")
 
 android {
-    compileSdkVersion 30
-    buildToolsVersion "30.0.2"
+    namespace "com.metallic.chiaki"
+    compileSdk 35
+    ndkVersion "28.2.13676358"
+
     defaultConfig {
         applicationId "com.metallic.chiaki"
-        minSdkVersion 21
-        targetSdkVersion 30
-        versionCode 9
+        minSdk 24
+        targetSdk 35
+        versionCode 12
         versionName chiakiVersion
         externalNativeBuild {
             cmake {
                 arguments "-DCHIAKI_ENABLE_TESTS=OFF",
                         "-DCHIAKI_ENABLE_CLI=OFF",
                         "-DCHIAKI_ENABLE_GUI=OFF",
+                        "-DCHIAKI_ENABLE_BOREALIS=OFF",
                         "-DCHIAKI_ENABLE_SETSU=OFF",
                         "-DCHIAKI_ENABLE_ANDROID=ON",
+                        "-DCHIAKI_USE_SYSTEM_NANOPB=OFF",
+                        "-DCHIAKI_USE_SYSTEM_JERASURE=OFF",
+                        "-DCHIAKI_ENABLE_FFMPEG_DECODER=OFF",
+                        "-DCHIAKI_ENABLE_PI_DECODER=OFF",
                         "-DCHIAKI_LIB_ENABLE_OPUS=OFF",
-                        "-DCHIAKI_LIB_OPENSSL_EXTERNAL_PROJECT=ON"
+                        "-DCHIAKI_LIB_OPENSSL_EXTERNAL_PROJECT=ON",
+                        "-DCHIAKI_LIB_JSONC_EXTERNAL_PROJECT=ON",
+                        "-DCHIAKI_LIB_MINIUPNPC_EXTERNAL_PROJECT=ON",
+                        "-DCHIAKI_ENABLE_STEAM_SHORTCUT=OFF",
+                        "-DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF",
+                        "-DANDROID_STL=c++_shared",
+                        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
             }
         }
     }
+
+    buildFeatures {
+        viewBinding true
+        prefab true
+    }
+
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
+
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
+        freeCompilerArgs += "-opt-in=kotlin.ExperimentalUnsignedTypes"
     }
+
     externalNativeBuild {
         cmake {
-            version "3.10.2+"
-            path rootCMakeLists
+            version "3.22.1"
+            path file("../../CMakeLists.txt")
         }
     }
+
     signingConfigs {
         release
     }
+
     buildTypes {
         release {
             minifyEnabled true
@@ -67,7 +94,7 @@ android {
         properties.load(propertiesFile.newDataInputStream())
     }
 
-	if(properties.containsKey("chiakiKeystore")) {
+    if(properties.containsKey("chiakiKeystore")) {
         println("Enabling Local Signing")
         buildTypes.release.signingConfig = signingConfigs.release
         buildTypes.debug.signingConfig = signingConfigs.release
@@ -80,37 +107,34 @@ android {
     }
 }
 
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
-    kotlinOptions {
-        freeCompilerArgs += "-Xuse-experimental=kotlin.ExperimentalUnsignedTypes"
-    }
-}
-
-androidExtensions {
-    // for @Parcelize
-    experimental = true
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-    implementation 'androidx.appcompat:appcompat:1.1.0'
-    implementation 'androidx.core:core-ktx:1.2.0'
-    implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
-    implementation 'androidx.recyclerview:recyclerview:1.1.0'
-    implementation 'androidx.preference:preference:1.1.0'
-    implementation 'com.google.android.material:material:1.1.0-beta02'
-    implementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.2.0'
-    implementation 'androidx.lifecycle:lifecycle-reactivestreams:2.2.0'
-    implementation "io.reactivex.rxjava2:rxjava:2.2.12"
-    implementation "io.reactivex.rxjava2:rxkotlin:2.4.0"
-    implementation 'io.reactivex.rxjava2:rxandroid:2.1.1'
-    def room_version = "2.2.4"
-    implementation "androidx.room:room-runtime:$room_version"
-    kapt "androidx.room:room-compiler:$room_version"
-    implementation "androidx.room:room-ktx:$room_version"
-    implementation "androidx.room:room-rxjava2:$room_version"
-    implementation "com.squareup.moshi:moshi:1.9.2"
-    kapt "com.squareup.moshi:moshi-kotlin-codegen:1.9.2"
+    implementation libs.activity.ktx
+    implementation libs.appcompat
+    implementation libs.core.ktx
+    implementation libs.constraintlayout
+    implementation libs.recyclerview
+    implementation libs.preference.ktx
+    implementation libs.security.crypto
+    implementation libs.material
+
+    implementation libs.lifecycle.viewmodel.ktx
+    implementation libs.lifecycle.livedata.ktx
+
+    implementation libs.coroutines.android
+
+    implementation libs.room.runtime
+    ksp libs.room.compiler
+    implementation libs.room.ktx
+
+    implementation libs.moshi
+    ksp libs.moshi.kotlin.codegen
+
+    implementation libs.oboe
+
+    testImplementation 'junit:junit:4.13.2'
 }

@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.text.InputType
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.*
 import com.metallic.chiaki.R
 import com.metallic.chiaki.common.Preferences
@@ -16,9 +17,6 @@ import com.metallic.chiaki.common.exportAndShareAllSettings
 import com.metallic.chiaki.common.ext.viewModelFactory
 import com.metallic.chiaki.common.getDatabase
 import com.metallic.chiaki.common.importSettingsFromUri
-import com.metallic.chiaki.lib.Codec
-import io.reactivex.disposables.CompositeDisposable
-import io.reactivex.rxkotlin.addTo
 
 class DataStore(val preferences: Preferences): PreferenceDataStore()
 {
@@ -27,6 +25,8 @@ class DataStore(val preferences: Preferences): PreferenceDataStore()
 		preferences.logVerboseKey -> preferences.logVerbose
 		preferences.swapCrossMoonKey -> preferences.swapCrossMoon
 		preferences.rumbleEnabledKey -> preferences.rumbleEnabled
+		preferences.motionEnabledKey -> preferences.motionEnabled
+		preferences.buttonHapticEnabledKey -> preferences.buttonHapticEnabled
 		else -> defValue
 	}
 
@@ -37,6 +37,8 @@ class DataStore(val preferences: Preferences): PreferenceDataStore()
 			preferences.logVerboseKey -> preferences.logVerbose = value
 			preferences.swapCrossMoonKey -> preferences.swapCrossMoon = value
 			preferences.rumbleEnabledKey -> preferences.rumbleEnabled = value
+			preferences.motionEnabledKey -> preferences.motionEnabled = value
+			preferences.buttonHapticEnabledKey -> preferences.buttonHapticEnabled = value
 		}
 	}
 
@@ -79,9 +81,6 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 	{
 		private const val PICK_SETTINGS_JSON_REQUEST = 1
 	}
-
-	private var disposable = CompositeDisposable()
-	private var exportDisposable = CompositeDisposable().also { it.addTo(disposable) }
 
 	override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?)
 	{
@@ -134,19 +133,12 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 		preferenceScreen.findPreference<Preference>(getString(R.string.preferences_import_settings_key))?.setOnPreferenceClickListener { importSettings(); true }
 	}
 
-	override fun onDestroy()
-	{
-		super.onDestroy()
-		disposable.dispose()
-	}
-
 	override fun getTitle(resources: Resources): String = resources.getString(R.string.title_settings)
 
 	private fun exportSettings()
 	{
 		val activity = activity ?: return
-		exportDisposable.clear()
-		exportAndShareAllSettings(activity).addTo(exportDisposable)
+		exportAndShareAllSettings(activity, lifecycleScope)
 	}
 
 	private fun importSettings()
@@ -164,7 +156,7 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 		{
 			val activity = activity ?: return
 			data?.data?.also {
-				importSettingsFromUri(activity, it, disposable)
+				importSettingsFromUri(activity, it, lifecycleScope)
 			}
 		}
 	}

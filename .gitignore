@@ -5,6 +5,10 @@ build
 cmake-build-*
 /build_*
 /build-*
+/debug
+/Debug
+/release
+/Release
 .DS_store
 *.AppImage
 appdir
@@ -13,12 +17,16 @@ appdir
 /SDL2-*
 /opus*
 /ffmpeg*
+/libplacebo*
 /sdl2-*
 /protoc*
 /openssl*
+scripts/chiaki-ng.iss
+scripts/Output
 .vs
 CMakeSettings.json
 chiaki.rb
+gui/chiaking.rc
 *.jks
 secret.tar
 keystore-env.sh
@@ -29,3 +37,5 @@ compile_commands.json
 chiaki.conf
 /appimage
 .cache/
+*.vscode
+site/

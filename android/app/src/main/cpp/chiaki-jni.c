@@ -110,9 +110,9 @@ JNIEXPORT jstring JNICALL JNI_FCN(quitReasonToString)(JNIEnv *env, jobject obj, 
 	return E->NewStringUTF(env, chiaki_quit_reason_string((ChiakiQuitReason)value));
 }
 
-JNIEXPORT jboolean JNICALL JNI_FCN(quitReasonIsStopped)(JNIEnv *env, jobject obj, jint value)
+JNIEXPORT jboolean JNICALL JNI_FCN(quitReasonIsError)(JNIEnv *env, jobject obj, jint value)
 {
-	return value == CHIAKI_QUIT_REASON_STOPPED;
+	return chiaki_quit_reason_is_error(value);
 }
 
 JNIEXPORT jobject JNICALL JNI_FCN(videoProfilePreset)(JNIEnv *env, jobject obj, jint resolution_preset, jint fps_preset, jobject codec)
@@ -590,7 +590,9 @@ JNIEXPORT void JNICALL JNI_FCN(discoveryServiceCreate)(JNIEnv *env, jobject obj,
 	options.cb = android_discovery_service_cb;
 	options.cb_user = service;
 
-	err = sockaddr_from_java(env, E->GetObjectField(env, options_obj, E->GetFieldID(env, options_class, "sendAddr", "Ljava/net/InetSocketAddress;")), &options.send_addr, &options.send_addr_size);
+	struct sockaddr *send_addr_tmp = NULL;
+	err = sockaddr_from_java(env, E->GetObjectField(env, options_obj, E->GetFieldID(env, options_class, "sendAddr", "Ljava/net/InetSocketAddress;")), &send_addr_tmp, &options.send_addr_size);
+	options.send_addr = (struct sockaddr_storage *)send_addr_tmp;
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		CHIAKI_LOGE(&global_log, "Failed to get sockaddr from InetSocketAddress");
@@ -797,8 +799,19 @@ JNIEXPORT void JNICALL JNI_FCN(registStart)(JNIEnv *env, jobject obj, jobject re
 	regist_info.broadcast = broadcast;
 	if(psn_online_id_string)
 		regist_info.psn_online_id = E->GetStringUTFChars(env, psn_online_id_string, NULL);
-	if(psn_account_id_array && E->GetArrayLength(env, psn_account_id_array) == sizeof(regist_info.psn_account_id))
+	if(psn_account_id_array)
+	{
+		if(E->GetArrayLength(env, psn_account_id_array) != sizeof(regist_info.psn_account_id))
+		{
+			CHIAKI_LOGE(&regist->log.log, "PSN Account ID must be exactly %u bytes", (unsigned)sizeof(regist_info.psn_account_id));
+			err = CHIAKI_ERR_INVALID_DATA;
+			E->ReleaseStringUTFChars(env, host_string, regist_info.host);
+			if(regist_info.psn_online_id)
+				E->ReleaseStringUTFChars(env, psn_online_id_string, regist_info.psn_online_id);
+			goto regist_start_failed;
+		}
 		E->GetByteArrayRegion(env, psn_account_id_array, 0, sizeof(regist_info.psn_account_id), (jbyte *)regist_info.psn_account_id);
+	}
 	regist_info.pin = (uint32_t)pin;
 
 	err = chiaki_regist_start(&regist->regist, &regist->log.log, &regist_info, android_chiaki_regist_cb, regist);
@@ -807,6 +820,7 @@ JNIEXPORT void JNICALL JNI_FCN(registStart)(JNIEnv *env, jobject obj, jobject re
 	if(regist_info.psn_online_id)
 		E->ReleaseStringUTFChars(env, psn_online_id_string, regist_info.psn_online_id);
 
+regist_start_failed:
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		android_chiaki_regist_fini_partial(env, regist);

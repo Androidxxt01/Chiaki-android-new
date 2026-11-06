@@ -8,13 +8,14 @@ import android.util.Base64
 import android.view.View
 import android.view.Window
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
 import com.metallic.chiaki.R
 import com.metallic.chiaki.common.ext.RevealActivity
+import com.metallic.chiaki.databinding.ActivityRegistBinding
 import com.metallic.chiaki.lib.RegistInfo
 import com.metallic.chiaki.lib.Target
-import kotlinx.android.synthetic.main.activity_regist.*
 import java.lang.IllegalArgumentException
 
 class RegistActivity: AppCompatActivity(), RevealActivity
@@ -28,35 +29,55 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 		private const val PIN_LENGTH = 8
 
 		private const val REQUEST_REGIST = 1
+		private const val REQUEST_PSN_LOGIN = 2
 	}
+
+	private lateinit var viewModel: RegistViewModel
+	private lateinit var binding: ActivityRegistBinding
 
 	override val revealWindow: Window get() = window
 	override val revealIntent: Intent get() = intent
-	override val revealRootLayout: View get() = rootLayout
-
-	private lateinit var viewModel: RegistViewModel
+	override val revealRootLayout: View get() = binding.rootLayout
 
 	override fun onCreate(savedInstanceState: Bundle?)
 	{
 		super.onCreate(savedInstanceState)
-		setContentView(R.layout.activity_regist)
+		binding = ActivityRegistBinding.inflate(layoutInflater)
+		setContentView(binding.root)
 		handleReveal()
 
 		viewModel = ViewModelProvider(this).get(RegistViewModel::class.java)
 
-		hostEditText.setText(intent.getStringExtra(EXTRA_HOST) ?: "255.255.255.255")
-		broadcastCheckBox.isChecked = intent.getBooleanExtra(EXTRA_BROADCAST, true)
+		binding.hostEditText.setText(intent.getStringExtra(EXTRA_HOST) ?: "255.255.255.255")
+		binding.broadcastCheckBox.isChecked = intent.getBooleanExtra(EXTRA_BROADCAST, true)
 
-		registButton.setOnClickListener { doRegist() }
+		binding.registButton.setOnClickListener { doRegist() }
+		PsnAccount.accountId(this)?.let { binding.psnIdEditText.setText(it) }
+		updatePsnLoginButton()
+		binding.psnLoginButton.setOnClickListener {
+			if(PsnAccount.accountId(this) != null) {
+				AlertDialog.Builder(this)
+					.setMessage(R.string.psn_logout)
+					.setNegativeButton(android.R.string.cancel, null)
+					.setPositiveButton(R.string.psn_logout) { _, _ ->
+						PsnAccount.clear(this)
+						binding.psnIdEditText.text?.clear()
+						updatePsnLoginButton()
+					}
+					.show()
+			} else {
+				startActivityForResult(Intent(this, PsnLoginActivity::class.java), REQUEST_PSN_LOGIN)
+			}
+		}
 
-		ps4VersionRadioGroup.check(when(viewModel.ps4Version.value ?: RegistViewModel.ConsoleVersion.PS5) {
+		binding.ps4VersionRadioGroup.check(when(viewModel.ps4Version.value ?: RegistViewModel.ConsoleVersion.PS5) {
 			RegistViewModel.ConsoleVersion.PS5 -> R.id.ps5RadioButton
 			RegistViewModel.ConsoleVersion.PS4_GE_8 -> R.id.ps4VersionGE8RadioButton
 			RegistViewModel.ConsoleVersion.PS4_GE_7 -> R.id.ps4VersionGE7RadioButton
 			RegistViewModel.ConsoleVersion.PS4_LT_7 -> R.id.ps4VersionLT7RadioButton
 		})
 
-		ps4VersionRadioGroup.setOnCheckedChangeListener { _, checkedId ->
+		binding.ps4VersionRadioGroup.setOnCheckedChangeListener { _, checkedId ->
 			viewModel.ps4Version.value = when(checkedId)
 			{
 				R.id.ps5RadioButton -> RegistViewModel.ConsoleVersion.PS5
@@ -68,14 +89,14 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 		}
 
 		viewModel.ps4Version.observe(this, Observer {
-			psnAccountIdHelpGroup.visibility = if(it == RegistViewModel.ConsoleVersion.PS4_LT_7) View.GONE else View.VISIBLE
-			psnIdTextInputLayout.hint = getString(when(it!!)
+			binding.psnAccountIdHelpGroup.visibility = if(it == RegistViewModel.ConsoleVersion.PS4_LT_7) View.GONE else View.VISIBLE
+			binding.psnIdTextInputLayout.hint = getString(when(it!!)
 			{
 				RegistViewModel.ConsoleVersion.PS4_LT_7 -> R.string.hint_regist_psn_online_id
 				else -> R.string.hint_regist_psn_account_id
 			})
-			pinHelpBeforeTextView.setText(if(it.isPS5) R.string.regist_pin_instructions_ps5_before else R.string.regist_pin_instructions_ps4_before)
-			pinHelpNavigationTextView.setText(if(it.isPS5) R.string.regist_pin_instructions_ps5_navigation else R.string.regist_pin_instructions_ps4_navigation)
+			binding.pinHelpBeforeTextView.setText(if(it.isPS5) R.string.regist_pin_instructions_ps5_before else R.string.regist_pin_instructions_ps4_before)
+			binding.pinHelpNavigationTextView.setText(if(it.isPS5) R.string.regist_pin_instructions_ps5_navigation else R.string.regist_pin_instructions_ps4_navigation)
 		})
 	}
 
@@ -83,11 +104,11 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 	{
 		val ps4Version = viewModel.ps4Version.value ?: RegistViewModel.ConsoleVersion.PS5
 
-		val host = hostEditText.text.toString().trim()
+		val host = binding.hostEditText.text.toString().trim()
 		val hostValid = host.isNotEmpty()
-		val broadcast = broadcastCheckBox.isChecked
+		val broadcast = binding.broadcastCheckBox.isChecked
 
-		val psnId = psnIdEditText.text.toString().trim()
+		val psnId = binding.psnIdEditText.text.toString().trim()
 		val psnOnlineId: String? = if(ps4Version == RegistViewModel.ConsoleVersion.PS4_LT_7) psnId else null
 		val psnAccountId: ByteArray? =
 			if(ps4Version != RegistViewModel.ConsoleVersion.PS4_LT_7)
@@ -101,11 +122,11 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 		}
 
 
-		val pin = pinEditText.text.toString()
+		val pin = binding.pinEditText.text.toString()
 		val pinValid = pin.length == PIN_LENGTH
 
-		hostEditText.error = if(!hostValid) getString(R.string.entered_host_invalid) else null
-		psnIdEditText.error =
+		binding.hostEditText.error = if(!hostValid) getString(R.string.entered_host_invalid) else null
+		binding.psnIdEditText.error =
 			if(!psnIdValid)
 				getString(when(ps4Version)
 				{
@@ -114,7 +135,7 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 				})
 			else
 				null
-		pinEditText.error = if(!pinValid) getString(R.string.regist_pin_invalid, PIN_LENGTH) else null
+		binding.pinEditText.error = if(!pinValid) getString(R.string.regist_pin_invalid, PIN_LENGTH) else null
 
 		if(!hostValid || !psnIdValid || !pinValid)
 			return
@@ -137,9 +158,17 @@ class RegistActivity: AppCompatActivity(), RevealActivity
 		}
 	}
 
+	private fun updatePsnLoginButton() {
+		binding.psnLoginButton.setText(if(PsnAccount.accountId(this) != null) R.string.psn_logout else R.string.psn_login)
+	}
+
 	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?)
 	{
 		super.onActivityResult(requestCode, resultCode, data)
+		if(requestCode == REQUEST_PSN_LOGIN && resultCode == RESULT_OK) {
+			data?.getStringExtra(PsnLoginActivity.EXTRA_ACCOUNT_ID)?.let { binding.psnIdEditText.setText(it) }
+			updatePsnLoginButton()
+		}
 		if(requestCode == REQUEST_REGIST && resultCode == RESULT_OK)
 			finish()
 	}

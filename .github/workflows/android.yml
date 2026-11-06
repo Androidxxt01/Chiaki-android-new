@@ -1,0 +1,60 @@
+name: Android
+
+on:
+  push:
+    branches:
+      - merge-desktop
+      - 'feature-*'
+  pull_request:
+    branches:
+      - merge-desktop
+      - 'feature-*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Inspect submodules
+        run: |
+          git submodule status
+          ls third-party/nanopb | head
+          ls third-party/jerasure | head
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee build.log
+
+      - name: Show CMake errors
+        if: failure()
+        working-directory: android
+        run: |
+          grep -n -A12 'CMake Error' build.log | head -80
+          grep -rn -A12 'CMake Error' app/.cxx --include='*.log' | head -80
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk

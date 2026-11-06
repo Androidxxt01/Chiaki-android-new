@@ -1,4 +1,5 @@
 <resources>
+    <string name="stream_control_layout">Layouts</string>
     <string name="app_name">Chiaki</string>
     <string name="title_main">Chiaki 千秋</string>
     <string name="title_settings">Settings</string>
@@ -42,6 +43,10 @@
     <string name="entered_host_invalid">Please enter a valid host name</string>
     <string name="regist_psn_online_id_invalid">Please enter a valid PSN ID</string>
     <string name="regist_psn_account_id_invalid">Please enter a valid 8-byte Account ID in Base64</string>
+    <string name="psn_login">Sign in with PlayStation Network</string>
+    <string name="psn_logout">Sign out of PlayStation Network</string>
+    <string name="psn_login_title">PlayStation Network sign in</string>
+    <string name="psn_login_error">PSN sign in failed: %1$s</string>
     <string name="regist_pin_invalid">Please enter a valid %d-digit PIN</string>
     <string name="action_share_log">Share Log</string>
     <string name="action_export_settings">Export Settings</string>
@@ -64,6 +69,7 @@
     <string name="preferences_category_title_stream">Stream</string>
     <string name="preferences_category_title_export">Export</string>
     <string name="preferences_registered_hosts_title">Registered Consoles</string>
+    <string name="preferences_touch_controls_title">Touch Controls</string>
     <string name="preferences_logs_title">Session Logs</string>
     <string name="preferences_logs_summary">Collected log files from previous sessions for debugging</string>
     <string name="preferences_export_settings_title">Export Settings</string>
@@ -90,6 +96,10 @@
     <string name="preferences_swap_cross_moon_summary">Swap face buttons if default mapping is incorrect (e.g. for 8BitDo controllers)</string>
     <string name="preferences_rumble_enabled_title">Rumble</string>
     <string name="preferences_rumble_enabled_summary">Use phone vibration motor for rumble</string>
+    <string name="preferences_motion_enabled_title">Motion</string>
+    <string name="preferences_motion_enabled_summary">Use device\'s motion sensors for controller motion</string>
+    <string name="preferences_button_haptic_enabled_title">Touch Haptics</string>
+    <string name="preferences_button_haptic_enabled_summary">Use phone vibration motor for short haptic feedback on button touches</string>
     <string name="alert_message_delete_registered_host">Are you sure you want to delete the registered console %s with ID %s?</string>
     <string name="alert_message_delete_manual_host">Are you sure you want to delete the console entry for %s?</string>
     <string name="action_keep">Keep</string>
@@ -99,12 +109,16 @@
     <string name="registered_hosts_empty_info">No Consoles registered.</string>
     <string name="display_hosts_empty_discovery_off_info">No consoles added yet.\nEnable Discovery to automatically find consoles on your local network.</string>
     <string name="display_hosts_empty_discovery_on_info">No consoles added or discovered.</string>
+    <string name="stream_on_screen_controls">On-Screen Controls</string>
+    <string name="stream_touchpad_only">Touchpad only</string>
 
     <!-- Don't localize these -->
     <string name="preferences_discovery_enabled_key">discovery_enabled</string>
     <string name="preferences_on_screen_controls_enabled_key">on_screen_controls_enabled</string>
     <string name="preferences_touchpad_only_enabled_key">touchpad_only_enabled</string>
     <string name="preferences_rumble_enabled_key">rumble_enabled</string>
+    <string name="preferences_motion_enabled_key">motion_enabled</string>
+    <string name="preferences_button_haptic_enabled_key">button_haptic_enabled</string>
     <string name="preferences_log_verbose_key">log_verbose</string>
     <string name="preferences_import_settings_key">import_settings</string>
     <string name="preferences_export_settings_key">export_settings</string>

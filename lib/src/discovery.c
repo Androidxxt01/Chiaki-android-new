@@ -145,7 +145,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_init(ChiakiDiscovery *discovery, 
 
 	discovery->log = log;
 
-	discovery->socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	discovery->socket = socket(family, SOCK_DGRAM, IPPROTO_UDP);
 	if(CHIAKI_SOCKET_IS_INVALID(discovery->socket))
 	{
 		CHIAKI_LOGE(discovery->log, "Discovery failed to create socket");
@@ -158,7 +158,8 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_init(ChiakiDiscovery *discovery, 
 	while(true)
 	{
 		memset(&discovery->local_addr, 0, sizeof(discovery->local_addr));
-		discovery->local_addr.sa_family = family;
+		((struct sockaddr *)&discovery->local_addr)->sa_family = family;
+		socklen_t len = 0;
 		if(family == AF_INET6)
 		{
 #ifndef __SWITCH__
@@ -167,17 +168,21 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_init(ChiakiDiscovery *discovery, 
 			struct sockaddr_in6 *addr = (struct sockaddr_in6 *)&discovery->local_addr;
 #ifndef __SWITCH__
 			addr->sin6_addr = anyaddr;
+#else
+			addr->sin6_addr = in6addr_any;
 #endif
 			addr->sin6_port = htons(port);
+			len = sizeof(struct sockaddr_in6);
 		}
 		else // AF_INET
 		{
 			struct sockaddr_in *addr = (struct sockaddr_in *)&discovery->local_addr;
 			addr->sin_addr.s_addr = htonl(INADDR_ANY);
 			addr->sin_port = htons(port);
+			len = sizeof(struct sockaddr_in);
 		}
 
-		r = bind(discovery->socket, &discovery->local_addr, sizeof(discovery->local_addr));
+		r = bind(discovery->socket, (struct sockaddr *)&discovery->local_addr, len);
 		if(r >= 0 || !port)
 			break;
 		if(port == CHIAKI_DISCOVERY_PORT_LOCAL_MAX)
@@ -197,7 +202,11 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_init(ChiakiDiscovery *discovery, 
 	if(r < 0)
 	{
 		CHIAKI_LOGE(discovery->log, "Discovery failed to bind");
-		CHIAKI_SOCKET_CLOSE(discovery->socket);
+		if(!CHIAKI_SOCKET_IS_INVALID(discovery->socket))
+		{
+			CHIAKI_SOCKET_CLOSE(discovery->socket);
+			discovery->socket = CHIAKI_INVALID_SOCKET;
+		}
 		return CHIAKI_ERR_NETWORK;
 	}
 
@@ -218,12 +227,16 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_init(ChiakiDiscovery *discovery, 
 
 CHIAKI_EXPORT void chiaki_discovery_fini(ChiakiDiscovery *discovery)
 {
-	CHIAKI_SOCKET_CLOSE(discovery->socket);
+	if(!CHIAKI_SOCKET_IS_INVALID(discovery->socket))
+	{
+		CHIAKI_SOCKET_CLOSE(discovery->socket);
+		discovery->socket = CHIAKI_INVALID_SOCKET;
+	}
 }
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_send(ChiakiDiscovery *discovery, ChiakiDiscoveryPacket *packet, struct sockaddr *addr, size_t addr_size)
 {
-	if(addr->sa_family != discovery->local_addr.sa_family)
+	if(addr->sa_family != ((struct sockaddr *)&discovery->local_addr)->sa_family)
 		return CHIAKI_ERR_INVALID_DATA;
 
 	char buf[512];
@@ -233,10 +246,10 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_send(ChiakiDiscovery *discovery, 
 	if((size_t)len >= sizeof(buf))
 		return CHIAKI_ERR_BUF_TOO_SMALL;
 
-	CHIAKI_LOGV(discovery->log, "Discovery sending:");
-	chiaki_log_hexdump(discovery->log, CHIAKI_LOG_VERBOSE, (const uint8_t *)buf, (size_t)len + 1);
+	// CHIAKI_LOGV(discovery->log, "Discovery sending:");
+	// chiaki_log_hexdump(discovery->log, CHIAKI_LOG_VERBOSE, (const uint8_t *)buf, (size_t)len + 1);
 	int rc = sendto_broadcast(discovery->log, discovery->socket, buf, (size_t)len + 1, 0, addr, addr_size);
-	if(rc < 0)
+	if(rc < 0 && addr->sa_family == AF_INET)
 	{
 		CHIAKI_LOGE(discovery->log, "Discovery failed to send: %s", strerror(errno));
 		return CHIAKI_ERR_NETWORK;
@@ -246,6 +259,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_send(ChiakiDiscovery *discovery, 
 }
 
 static void *discovery_thread_func(void *user);
+static void *discovery_thread_func_oneshot(void *user);
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_thread_start(ChiakiDiscoveryThread *thread, ChiakiDiscovery *discovery, ChiakiDiscoveryCb cb, void *cb_user)
 {
@@ -272,6 +286,31 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_thread_start(ChiakiDiscoveryThrea
 	return CHIAKI_ERR_SUCCESS;
 }
 
+CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_thread_start_oneshot(ChiakiDiscoveryThread *thread, ChiakiDiscovery *discovery, ChiakiDiscoveryCb cb, void *cb_user)
+{
+	thread->discovery = discovery;
+	thread->cb = cb;
+	thread->cb_user = cb_user;
+
+	ChiakiErrorCode err = chiaki_stop_pipe_init(&thread->stop_pipe);
+	if(err != CHIAKI_ERR_SUCCESS)
+	{
+		CHIAKI_LOGE(discovery->log, "Discovery (thread) failed to create pipe");
+		return err;
+	}
+
+	err = chiaki_thread_create(&thread->thread, discovery_thread_func_oneshot, thread);
+	if(err != CHIAKI_ERR_SUCCESS)
+	{
+		chiaki_stop_pipe_fini(&thread->stop_pipe);
+		return err;
+	}
+
+	chiaki_thread_set_name(&thread->thread, "Chiaki Discovery");
+
+	return CHIAKI_ERR_SUCCESS;
+}
+
 CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_thread_stop(ChiakiDiscoveryThread *thread)
 {
 	chiaki_stop_pipe_stop(&thread->stop_pipe);
@@ -286,6 +325,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_thread_stop(ChiakiDiscoveryThread
 static void *discovery_thread_func(void *user)
 {
 	ChiakiDiscoveryThread *thread = user;
+	chiaki_thread_set_affinity(CHIAKI_THREAD_NAME_DISCOVERY);
 	ChiakiDiscovery *discovery = thread->discovery;
 
 	while(1)
@@ -302,7 +342,7 @@ static void *discovery_thread_func(void *user)
 		char buf[512];
 		struct sockaddr client_addr;
 		socklen_t client_addr_size = sizeof(client_addr);
-		int n = recvfrom(discovery->socket, buf, sizeof(buf) - 1, 0, &client_addr, &client_addr_size);
+		CHIAKI_SSIZET_TYPE n = recvfrom(discovery->socket, buf, sizeof(buf) - 1, 0, &client_addr, &client_addr_size);
 		if(n < 0)
 		{
 			CHIAKI_LOGE(discovery->log, "Discovery thread failed to read from socket");
@@ -336,23 +376,87 @@ static void *discovery_thread_func(void *user)
 	return NULL;
 }
 
+static void *discovery_thread_func_oneshot(void *user)
+{
+	ChiakiDiscoveryThread *thread = user;
+	chiaki_thread_set_affinity(CHIAKI_THREAD_NAME_DISCOVERY);
+	ChiakiDiscovery *discovery = thread->discovery;
+
+	while(1)
+	{
+		ChiakiErrorCode err = chiaki_stop_pipe_select_single(&thread->stop_pipe, discovery->socket, false, UINT64_MAX);
+		if(err == CHIAKI_ERR_CANCELED)
+			break;
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			CHIAKI_LOGE(discovery->log, "Discovery thread failed to select");
+			break;
+		}
+
+		char buf[512];
+		struct sockaddr client_addr;
+		socklen_t client_addr_size = sizeof(client_addr);
+		CHIAKI_SSIZET_TYPE n = recvfrom(discovery->socket, buf, sizeof(buf) - 1, 0, &client_addr, &client_addr_size);
+		if(n < 0)
+		{
+			CHIAKI_LOGE(discovery->log, "Discovery thread failed to read from socket");
+			break;
+		}
+
+		if(n == 0)
+			continue;
+
+		if(n > sizeof(buf) - 1)
+			n = sizeof(buf) - 1;
+
+		buf[n] = '\00';
+
+		//CHIAKI_LOGV(discovery->log, "Discovery received:\n%s", buf);
+		//chiaki_log_hexdump_raw(discovery->log, CHIAKI_LOG_VERBOSE, (const uint8_t *)buf, n);
+
+		char addr_buf[64];
+		ChiakiDiscoveryHost response;
+		err = chiaki_discovery_srch_response_parse(&response, &client_addr, addr_buf, sizeof(addr_buf), buf, n);
+		if(err != CHIAKI_ERR_SUCCESS)
+		{
+			CHIAKI_LOGI(discovery->log, "Discovery Response invalid");
+			continue;
+		}
+
+		if(thread->cb)
+		{
+			thread->cb(&response, thread->cb_user);
+			break;
+		}
+	}
+
+	return NULL;
+}
+
 CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_wakeup(ChiakiLog *log, ChiakiDiscovery *discovery, const char *host, uint64_t user_credential, bool ps5)
 {
 	struct addrinfo *addrinfos;
-	int r = getaddrinfo(host, NULL, NULL, &addrinfos); // TODO: this blocks, use something else
+	// make hostname use ipv4 for now
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_socktype = SOCK_DGRAM;
+	char *ipv6 = strchr(host, ':');
+	if(ipv6)
+		hints.ai_family = AF_INET6;
+	else
+		hints.ai_family = AF_INET;
+	int r = getaddrinfo(host, NULL, &hints, &addrinfos); // TODO: this blocks, use something else
 	if(r != 0)
 	{
 		CHIAKI_LOGE(log, "DiscoveryManager failed to getaddrinfo for wakeup");
 		return CHIAKI_ERR_NETWORK;
 	}
-	struct sockaddr addr = { 0 };
+	struct sockaddr_in6 addr = { 0 };
 	socklen_t addr_len = 0;
 	for(struct addrinfo *ai=addrinfos; ai; ai=ai->ai_next)
 	{
-		if(ai->ai_family != AF_INET)
+		if(ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
 			continue;
-		//if(ai->ai_protocol != IPPROTO_UDP)
-		//	continue;
 		if(ai->ai_addrlen > sizeof(addr))
 			continue;
 		memcpy(&addr, ai->ai_addr, ai->ai_addrlen);
@@ -366,8 +470,10 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_wakeup(ChiakiLog *log, ChiakiDisc
 		CHIAKI_LOGE(log, "DiscoveryManager failed to get suitable address from getaddrinfo for wakeup");
 		return CHIAKI_ERR_UNKNOWN;
 	}
-
-	((struct sockaddr_in *)&addr)->sin_port = htons(ps5 ? CHIAKI_DISCOVERY_PORT_PS5 : CHIAKI_DISCOVERY_PORT_PS4);
+	if(((struct sockaddr *)&addr)->sa_family == AF_INET)
+		((struct sockaddr_in *)&addr)->sin_port = htons(ps5 ? CHIAKI_DISCOVERY_PORT_PS5 : CHIAKI_DISCOVERY_PORT_PS4);
+	else
+		addr.sin6_port = htons(ps5 ? CHIAKI_DISCOVERY_PORT_PS5 : CHIAKI_DISCOVERY_PORT_PS4);
 
 	ChiakiDiscoveryPacket packet = { 0 };
 	packet.cmd = CHIAKI_DISCOVERY_CMD_WAKEUP;
@@ -376,17 +482,17 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_discovery_wakeup(ChiakiLog *log, ChiakiDisc
 
 	ChiakiErrorCode err;
 	if(discovery)
-		err = chiaki_discovery_send(discovery, &packet, &addr, addr_len);
+		err = chiaki_discovery_send(discovery, &packet, (struct sockaddr *)&addr, addr_len);
 	else
 	{
 		ChiakiDiscovery tmp_discovery;
-		err = chiaki_discovery_init(&tmp_discovery, log, AF_INET);
+		err = chiaki_discovery_init(&tmp_discovery, log, ((struct sockaddr *)&addr)->sa_family);
 		if(err != CHIAKI_ERR_SUCCESS)
 		{
 			CHIAKI_LOGE(log, "Failed to init temporary discovery for wakeup: %s", chiaki_error_string(err));
 			return err;
 		}
-		err = chiaki_discovery_send(&tmp_discovery, &packet, &addr, addr_len);
+		err = chiaki_discovery_send(&tmp_discovery, &packet, (struct sockaddr *)&addr, addr_len);
 		chiaki_discovery_fini(&tmp_discovery);
 	}
 
