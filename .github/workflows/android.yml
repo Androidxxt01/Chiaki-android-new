@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - merge-desktop
+      - 'feature-*'
   pull_request:
     branches:
       - merge-desktop
+      - 'feature-*'
   workflow_dispatch:
 
 jobs:
