@@ -69,6 +69,7 @@
     <string name="preferences_category_title_stream">Stream</string>
     <string name="preferences_category_title_export">Export</string>
     <string name="preferences_registered_hosts_title">Registered Consoles</string>
+    <string name="preferences_touch_controls_title">Touch Controls</string>
     <string name="preferences_logs_title">Session Logs</string>
     <string name="preferences_logs_summary">Collected log files from previous sessions for debugging</string>
     <string name="preferences_export_settings_title">Export Settings</string>

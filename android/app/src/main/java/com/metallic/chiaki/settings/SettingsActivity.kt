@@ -43,6 +43,10 @@ class SettingsActivity: AppCompatActivity(), PreferenceFragmentCompat.OnPreferen
 			replaceFragment(SettingsRegisteredHostsFragment(), true)
 			true
 		}
+		SettingsTouchControlsFragment::class.java.canonicalName -> {
+			replaceFragment(SettingsTouchControlsFragment(), true)
+			true
+		}
 		else -> false
 	}
 
