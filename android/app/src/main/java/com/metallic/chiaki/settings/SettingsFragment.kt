@@ -131,6 +131,10 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 
 		preferenceScreen.findPreference<Preference>(getString(R.string.preferences_export_settings_key))?.setOnPreferenceClickListener { exportSettings(); true }
 		preferenceScreen.findPreference<Preference>(getString(R.string.preferences_import_settings_key))?.setOnPreferenceClickListener { importSettings(); true }
+		preferenceScreen.findPreference<Preference>("touch_controls")?.setOnPreferenceClickListener {
+			startActivity(Intent(requireContext(), TouchControlsEditorActivity::class.java))
+			true
+		}
 	}
 
 	override fun getTitle(resources: Resources): String = resources.getString(R.string.title_settings)

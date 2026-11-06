@@ -14,14 +14,28 @@ import com.metallic.chiaki.touchcontrols.DefaultTouchControlsFragment
 /** Hosts the controls editor on a full-size, landscape canvas like the stream overlay. */
 class TouchControlsEditorActivity : AppCompatActivity()
 {
-	override fun onCreate(savedInstanceState: Bundle?)
-	{
-		super.onCreate(savedInstanceState)
-		WindowCompat.setDecorFitsSystemWindows(window, false)
+	private fun applyImmersiveMode() {
 		WindowInsetsControllerCompat(window, window.decorView).apply {
 			systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 			hide(WindowInsetsCompat.Type.systemBars())
 		}
+	}
+
+	override fun onResume() {
+		super.onResume()
+		applyImmersiveMode()
+	}
+
+	override fun onWindowFocusChanged(hasFocus: Boolean) {
+		super.onWindowFocusChanged(hasFocus)
+		if (hasFocus) applyImmersiveMode()
+	}
+
+	override fun onCreate(savedInstanceState: Bundle?)
+	{
+		super.onCreate(savedInstanceState)
+		WindowCompat.setDecorFitsSystemWindows(window, false)
+		applyImmersiveMode()
 
 		val container = FrameLayout(this).apply { id = View.generateViewId() }
 		setContentView(container, FrameLayout.LayoutParams(

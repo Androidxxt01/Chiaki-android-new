@@ -70,6 +70,13 @@
     <string name="preferences_category_title_export">Export</string>
     <string name="preferences_registered_hosts_title">Registered Consoles</string>
     <string name="preferences_touch_controls_title">Touch Controls</string>
+    <string name="touch_editor_profiles">Profiles</string>
+    <string name="touch_editor_default">Default</string>
+    <string name="touch_editor_done">Done</string>
+    <string name="touch_editor_selected">Selected: %1$s</string>
+    <string name="touch_editor_size">Size</string>
+    <string name="touch_editor_button_opacity">Button opacity</string>
+    <string name="touch_editor_reset_button">Reset button</string>
     <string name="preferences_logs_title">Session Logs</string>
     <string name="preferences_logs_summary">Collected log files from previous sessions for debugging</string>
     <string name="preferences_export_settings_title">Export Settings</string>

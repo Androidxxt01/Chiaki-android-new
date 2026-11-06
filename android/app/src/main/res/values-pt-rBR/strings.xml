@@ -1,0 +1,9 @@
+<resources>
+    <string name="touch_editor_profiles">Perfis</string>
+    <string name="touch_editor_default">Padrão</string>
+    <string name="touch_editor_done">Concluir</string>
+    <string name="touch_editor_selected">Selecionado: %1$s</string>
+    <string name="touch_editor_size">Tamanho</string>
+    <string name="touch_editor_button_opacity">Opacidade do botão</string>
+    <string name="touch_editor_reset_button">Redefinir botão</string>
+</resources>

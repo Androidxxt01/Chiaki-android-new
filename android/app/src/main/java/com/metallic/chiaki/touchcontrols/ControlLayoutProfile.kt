@@ -7,7 +7,13 @@ import androidx.preference.PreferenceManager
 import org.json.JSONObject
 
 /** A layout stores normalized top-left coordinates and normalized dimensions. */
-data class ControlLayoutItem(var x: Float, var y: Float, var width: Float, var height: Float)
+data class ControlLayoutItem(
+	var x: Float,
+	var y: Float,
+	var width: Float,
+	var height: Float,
+	var opacity: Int = 100
+)
 data class ControlLayoutProfile(
 	var name: String,
 	var opacity: Int = 75,
@@ -26,7 +32,11 @@ class ControlLayoutStore(context: Context) {
 			val items = mutableMapOf<String, ControlLayoutItem>()
 			val itemObject = entry.optJSONObject("items") ?: JSONObject()
 			itemObject.keys().forEach { id -> itemObject.optJSONObject(id)?.let { item ->
-				items[id] = ControlLayoutItem(item.optDouble("x").toFloat(), item.optDouble("y").toFloat(), item.optDouble("w").toFloat(), item.optDouble("h").toFloat())
+				items[id] = ControlLayoutItem(
+					item.optDouble("x").toFloat(), item.optDouble("y").toFloat(),
+					item.optDouble("w").toFloat(), item.optDouble("h").toFloat(),
+					item.optInt("opacity", 100).coerceIn(10, 100)
+				)
 			} }
 			ControlLayoutProfile(entry.optString("name", "Layout ${index + 1}"), entry.optInt("opacity", 75).coerceIn(10, 100), items)
 		}
@@ -36,7 +46,7 @@ class ControlLayoutStore(context: Context) {
 		val array = org.json.JSONArray()
 		profiles.forEach { profile ->
 			val items = JSONObject()
-			profile.items.forEach { (id, item) -> items.put(id, JSONObject().put("x", item.x).put("y", item.y).put("w", item.width).put("h", item.height)) }
+			profile.items.forEach { (id, item) -> items.put(id, JSONObject().put("x", item.x).put("y", item.y).put("w", item.width).put("h", item.height).put("opacity", item.opacity)) }
 			array.put(JSONObject().put("name", profile.name).put("opacity", profile.opacity).put("items", items))
 		}
 		preferences.edit().putString(key, array.toString()).putString(activeKey, active).apply()

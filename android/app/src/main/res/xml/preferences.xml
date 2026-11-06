@@ -16,7 +16,6 @@
         <Preference
             app:key="touch_controls"
             app:title="@string/preferences_touch_controls_title"
-            app:fragment="com.metallic.chiaki.settings.SettingsTouchControlsFragment"
             app:icon="@drawable/ic_gamepad"/>
 
         <SwitchPreference
