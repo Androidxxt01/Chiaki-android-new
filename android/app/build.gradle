@@ -119,6 +119,7 @@ dependencies {
     implementation libs.constraintlayout
     implementation libs.recyclerview
     implementation libs.preference.ktx
+    implementation libs.security.crypto
     implementation libs.material
 
     implementation libs.lifecycle.viewmodel.ktx

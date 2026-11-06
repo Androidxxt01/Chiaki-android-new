@@ -42,6 +42,10 @@
     <string name="entered_host_invalid">Please enter a valid host name</string>
     <string name="regist_psn_online_id_invalid">Please enter a valid PSN ID</string>
     <string name="regist_psn_account_id_invalid">Please enter a valid 8-byte Account ID in Base64</string>
+    <string name="psn_login">Sign in with PlayStation Network</string>
+    <string name="psn_logout">Sign out of PlayStation Network</string>
+    <string name="psn_login_title">PlayStation Network sign in</string>
+    <string name="psn_login_error">PSN sign in failed: %1$s</string>
     <string name="regist_pin_invalid">Please enter a valid %d-digit PIN</string>
     <string name="action_share_log">Share Log</string>
     <string name="action_export_settings">Export Settings</string>

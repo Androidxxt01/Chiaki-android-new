@@ -66,6 +66,10 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize" />
 
         <activity
+            android:name=".regist.PsnLoginActivity"
+            android:theme="@style/MageTheme" />
+
+        <activity
             android:name=".manualconsole.EditManualConsoleActivity"
             android:theme="@style/MageTheme"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize" />
