@@ -17,12 +17,14 @@ enum class PhysicalInputKind
 {
 	BUTTON,
 	TRIGGER,
-	STICK_AXIS
+	STICK_AXIS,
+	ACTION
 }
 
 data class PhysicalMappingTarget(val id: String, @StringRes val title: Int, val kind: PhysicalInputKind)
 
-data class PhysicalInputBinding(val keyCode: Int? = null, val axis: Int? = null)
+data class PhysicalInputAtom(val keyCode: Int? = null, val axis: Int? = null)
+data class PhysicalInputBinding(val keyCode: Int? = null, val axis: Int? = null, val combo: List<PhysicalInputAtom> = emptyList())
 data class PhysicalMappingProfile(
 	val id: String,
 	var name: String,
@@ -54,7 +56,9 @@ object PhysicalControllerMappings
 		PhysicalMappingTarget("left_x", R.string.physical_mapping_left_stick_x, PhysicalInputKind.STICK_AXIS),
 		PhysicalMappingTarget("left_y", R.string.physical_mapping_left_stick_y, PhysicalInputKind.STICK_AXIS),
 		PhysicalMappingTarget("right_x", R.string.physical_mapping_right_stick_x, PhysicalInputKind.STICK_AXIS),
-		PhysicalMappingTarget("right_y", R.string.physical_mapping_right_stick_y, PhysicalInputKind.STICK_AXIS)
+		PhysicalMappingTarget("right_y", R.string.physical_mapping_right_stick_y, PhysicalInputKind.STICK_AXIS),
+		PhysicalMappingTarget("screen_controls_toggle", R.string.physical_mapping_action_screen_controls, PhysicalInputKind.ACTION),
+		PhysicalMappingTarget("touchpad_toggle", R.string.physical_mapping_action_touchpad, PhysicalInputKind.ACTION)
 	)
 
 	fun deviceKey(device: InputDevice): String =
@@ -106,6 +110,15 @@ object PhysicalControllerMappings
 		val profiles = readProfiles(context)
 		profiles[profileId]?.bindings?.clear() ?: return
 		writeProfiles(context, profiles)
+	}
+
+	fun hasComboConflict(context: Context, profileId: String, targetId: String, binding: PhysicalInputBinding): Boolean
+	{
+		if(binding.combo.size < 2) return false
+		val proposed = binding.combo.toSet()
+		return readProfiles(context)[profileId]?.bindings?.any { (id, saved) ->
+			id != targetId && saved.combo.size >= 2 && saved.combo.toSet().intersect(proposed).isNotEmpty()
+		} ?: false
 	}
 
 	fun createProfile(context: Context, name: String, sourceId: String? = null): String
@@ -196,7 +209,13 @@ object PhysicalControllerMappings
 			val value = json.optJSONObject(target.id) ?: continue
 			val keyCode = if(value.has("keyCode")) value.optInt("keyCode") else null
 			val axis = if(value.has("axis")) value.optInt("axis") else null
-			if(keyCode != null || axis != null) result[target.id] = PhysicalInputBinding(keyCode, axis)
+			val combo = value.optJSONArray("combo")?.let { items ->
+				(0 until items.length()).mapNotNull { index ->
+					val atom = items.optJSONObject(index) ?: return@mapNotNull null
+					PhysicalInputAtom(if(atom.has("keyCode")) atom.optInt("keyCode") else null, if(atom.has("axis")) atom.optInt("axis") else null)
+				}
+			}.orEmpty()
+			if(keyCode != null || axis != null || combo.isNotEmpty()) result[target.id] = PhysicalInputBinding(keyCode, axis, combo)
 		}
 		return result
 	}
@@ -210,6 +229,12 @@ object PhysicalControllerMappings
 				bindings.put(target, JSONObject().apply {
 					binding.keyCode?.let { put("keyCode", it) }
 					binding.axis?.let { put("axis", it) }
+					if(binding.combo.isNotEmpty()) put("combo", JSONArray().apply {
+						binding.combo.forEach { atom -> put(JSONObject().apply {
+							atom.keyCode?.let { put("keyCode", it) }
+							atom.axis?.let { put("axis", it) }
+						}) }
+					})
 				})
 			}
 			array.put(JSONObject().put("id", profile.id).put("name", profile.name)
@@ -226,6 +251,9 @@ object PhysicalControllerMappings
 			return context.getString(R.string.physical_mapping_default)
 		return when
 		{
+			binding.combo.isNotEmpty() -> binding.combo.joinToString(" + ") { atom ->
+				bindingLabel(context, PhysicalInputBinding(atom.keyCode, atom.axis))
+			}
 			binding.keyCode != null -> KeyEvent.keyCodeToString(binding.keyCode).removePrefix("KEYCODE_")
 			binding.axis != null -> MotionEvent.axisToString(binding.axis).removePrefix("AXIS_")
 			else -> context.getString(R.string.physical_mapping_default)

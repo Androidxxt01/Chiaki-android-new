@@ -2,6 +2,8 @@ package com.metallic.chiaki.session
 
 import android.content.Context
 import android.hardware.*
+import android.os.Handler
+import android.os.Looper
 import android.view.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleObserver
@@ -13,6 +15,8 @@ import com.metallic.chiaki.lib.ControllerState
 class StreamInput(val context: Context, val preferences: Preferences)
 {
 	var controllerStateChangedCallback: ((ControllerState) -> Unit)? = null
+	var toggleOnScreenControlsCallback: (() -> Unit)? = null
+	var toggleOnScreenTouchpadCallback: (() -> Unit)? = null
 
 	val controllerState: ControllerState get()
 	{
@@ -38,6 +42,9 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	private val sensorControllerState = ControllerState() // from Motion Sensors
 	private val physicalDevices = mutableMapOf<String, PhysicalDeviceState>()
+	private val comboHandler = Handler(Looper.getMainLooper())
+	private val comboDelayMs = 65L
+	private val activeSpecialActions = mutableSetOf<String>()
 	var touchControllerState = ControllerState()
 		set(value)
 		{
@@ -58,6 +65,8 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		var mapping: Map<String, PhysicalInputBinding> = emptyMap()
 		val pressedKeys = mutableSetOf<Int>()
 		val axisValues = mutableMapOf<Int, Float>()
+		val readyComboAtoms = mutableSetOf<PhysicalInputAtom>()
+		val pendingComboAtoms = mutableMapOf<PhysicalInputAtom, Runnable>()
 	}
 
 	private val sensorEventListener = object: SensorEventListener {
@@ -122,6 +131,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	private fun controllerStateUpdated()
 	{
+		updateSpecialActions()
 		controllerStateChangedCallback?.let { it(controllerState) }
 	}
 
@@ -139,7 +149,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 			state.pressedKeys.add(event.keyCode)
 		else
 			state.pressedKeys.remove(event.keyCode)
-
+		updateComboDelay(state)
 		controllerStateUpdated()
 		return true
 	}
@@ -152,6 +162,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		val deviceKey = PhysicalControllerMappings.deviceKey(device)
 		val state = physicalState(deviceKey, device)
 		motionAxes.forEach { state.axisValues[it] = event.getAxisValue(it) }
+		updateComboDelay(state)
 		//Log.i("StreamSession", "motionEvent => $state")
 		controllerStateUpdated()
 		return true
@@ -166,13 +177,90 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	private fun allHandledKeyCodes(profile: Map<String, PhysicalInputBinding>): Set<Int>
 	{
-		return profile.values.mapNotNull { it.keyCode }.toSet() + setOf(
+		return profile.values.flatMap { binding -> binding.combo.mapNotNull { it.keyCode } + listOfNotNull(binding.keyCode) }.toSet() + setOf(
 			KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y,
 			KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,
 			KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_BUTTON_SELECT,
 			KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_C, KeyEvent.KEYCODE_BUTTON_MODE,
 			KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT
 		)
+	}
+
+	private fun PhysicalDeviceState.isAtomPressed(atom: PhysicalInputAtom): Boolean = when
+	{
+		atom.keyCode != null -> atom.keyCode in pressedKeys
+		atom.axis != null -> {
+			val value = axisValues[atom.axis] ?: 0.0f
+			val normalized = if(atom.axis in setOf(MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE))
+				normalizeTriggerAxis(value, atom.axis, device) else kotlin.math.abs(normalizeStickAxis(value, atom.axis, device))
+			normalized > if(atom.axis in setOf(MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE)) 0.45f else 0.65f
+		}
+		else -> false
+	}
+
+	private fun updateComboDelay(state: PhysicalDeviceState)
+	{
+		val comboAtoms = state.mapping.values.flatMap { it.combo }.toSet()
+		comboAtoms.forEach { atom ->
+			if(state.isAtomPressed(atom))
+			{
+				if(atom !in state.readyComboAtoms && atom !in state.pendingComboAtoms)
+				{
+					val runnable = Runnable {
+						state.pendingComboAtoms.remove(atom)
+						if(state.isAtomPressed(atom))
+						{
+							state.readyComboAtoms.add(atom)
+							controllerStateUpdated()
+						}
+					}
+					state.pendingComboAtoms[atom] = runnable
+					comboHandler.postDelayed(runnable, comboDelayMs)
+				}
+			}
+			else
+			{
+				state.readyComboAtoms.remove(atom)
+				state.pendingComboAtoms.remove(atom)?.let { comboHandler.removeCallbacks(it) }
+			}
+		}
+	}
+
+	private fun PhysicalDeviceState.bindingActive(targetId: String, binding: PhysicalInputBinding): Boolean
+	{
+		val activeCombos = mapping.filterValues { it.combo.size >= 2 }
+			.entries.sortedByDescending { it.value.combo.size }
+			.filter { (_, comboBinding) -> comboBinding.combo.all { isAtomPressed(it) } }
+		val claimedComboAtoms = mutableSetOf<PhysicalInputAtom>()
+		val selectedCombos = mutableSetOf<String>()
+		activeCombos.forEach { (id, comboBinding) ->
+			if(comboBinding.combo.none { it in claimedComboAtoms })
+			{
+				claimedComboAtoms.addAll(comboBinding.combo)
+				selectedCombos.add(id)
+			}
+		}
+		if(binding.combo.isNotEmpty()) return targetId in selectedCombos
+		val atom = binding.keyCode?.let { PhysicalInputAtom(keyCode = it) }
+			?: binding.axis?.let { PhysicalInputAtom(axis = it) } ?: return false
+		if(atom in claimedComboAtoms || (mapping.values.any { atom in it.combo } && atom !in readyComboAtoms)) return false
+		return isAtomPressed(atom)
+	}
+
+	private fun updateSpecialActions()
+	{
+		val targets = listOf("screen_controls_toggle", "touchpad_toggle")
+		targets.forEach { target ->
+			val active = physicalDevices.values.any { input -> input.mapping[target]?.let { input.bindingActive(target, it) } == true }
+			val wasActive = target in activeSpecialActions
+			if(active && !wasActive)
+				when(target)
+				{
+					"screen_controls_toggle" -> toggleOnScreenControlsCallback?.invoke()
+					"touchpad_toggle" -> toggleOnScreenTouchpadCallback?.invoke()
+				}
+			if(active) activeSpecialActions.add(target) else activeSpecialActions.remove(target)
+		}
 	}
 
 	private fun physicalControllerState(): ControllerState
@@ -186,14 +274,30 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	private fun PhysicalDeviceState.toControllerState(profile: Map<String, PhysicalInputBinding>): ControllerState
 	{
+		val comboAtoms = profile.values.flatMap { it.combo }.toSet()
+		val claimedAtoms = mutableSetOf<PhysicalInputAtom>()
+		val activeCombos = profile.filterValues { it.combo.size >= 2 }
+			.entries.sortedByDescending { it.value.combo.size }
+			.filter { (_, binding) -> binding.combo.all { isAtomPressed(it) } }
+		val activeComboTargets = mutableSetOf<String>()
+		activeCombos.forEach { (targetId, binding) ->
+			if(binding.combo.none { it in claimedAtoms })
+			{
+				claimedAtoms.addAll(binding.combo)
+				activeComboTargets.add(targetId)
+			}
+		}
+		fun isAllowed(atom: PhysicalInputAtom): Boolean = atom !in claimedAtoms && (atom !in comboAtoms || atom in readyComboAtoms)
+
 		fun pressed(target: String, defaultKeyCode: Int? = null, defaultPressed: Boolean = false): Boolean
 		{
 			val binding = profile[target]
 			return when
 			{
-				binding?.keyCode != null -> binding.keyCode in pressedKeys
-				binding?.axis != null -> axisValues[binding.axis]?.let { kotlin.math.abs(it) > 0.5f } ?: false
-				defaultKeyCode != null -> defaultKeyCode in pressedKeys || defaultPressed
+				binding?.combo?.isNotEmpty() == true -> target in activeComboTargets
+				binding?.keyCode != null -> binding.keyCode in pressedKeys && isAllowed(PhysicalInputAtom(keyCode = binding.keyCode))
+				binding?.axis != null -> isAtomPressed(PhysicalInputAtom(axis = binding.axis)) && isAllowed(PhysicalInputAtom(axis = binding.axis))
+				defaultKeyCode != null -> (defaultKeyCode in pressedKeys && isAllowed(PhysicalInputAtom(keyCode = defaultKeyCode))) || defaultPressed
 				else -> defaultPressed
 			}
 		}
@@ -201,7 +305,8 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		fun axisValue(target: String, defaultAxis: Int): Float
 		{
 			val binding = profile[target]
-			return axisValues[binding?.axis ?: defaultAxis] ?: 0.0f
+			val axis = binding?.axis ?: defaultAxis
+			return if(isAllowed(PhysicalInputAtom(axis = axis))) axisValues[axis] ?: 0.0f else 0.0f
 		}
 
 		fun stickAxis(target: String, defaultAxis: Int): Short
@@ -215,16 +320,20 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		fun trigger(target: String, defaultAxis: Int, defaultKeyCode: Int): UByte
 		{
 			val binding = profile[target]
+			if(binding?.combo?.isNotEmpty() == true)
+				return if(target in activeComboTargets) UByte.MAX_VALUE else 0.toUByte()
 			if(binding?.keyCode != null)
-				return if(binding.keyCode in pressedKeys) UByte.MAX_VALUE else 0.toUByte()
+				return if(binding.keyCode in pressedKeys && isAllowed(PhysicalInputAtom(keyCode = binding.keyCode))) UByte.MAX_VALUE else 0.toUByte()
 			if(binding?.axis != null)
 			{
+				val atom = PhysicalInputAtom(axis = binding.axis)
+				if(!isAllowed(atom)) return 0.toUByte()
 				val value = axisValues[binding.axis] ?: return 0.toUByte()
 				return (normalizeTriggerAxis(value, binding.axis, device) * UByte.MAX_VALUE.toFloat()).toInt().coerceIn(0, 255).toUByte()
 			}
 			val rawAxis = axisValues[defaultAxis]
-			val analog = rawAxis?.let { normalizeTriggerAxis(it, defaultAxis, device) } ?: 0.0f
-			val digital = defaultKeyCode in pressedKeys
+			val analog = if(isAllowed(PhysicalInputAtom(axis = defaultAxis))) rawAxis?.let { normalizeTriggerAxis(it, defaultAxis, device) } ?: 0.0f else 0.0f
+			val digital = defaultKeyCode in pressedKeys && isAllowed(PhysicalInputAtom(keyCode = defaultKeyCode))
 			return maxOf((analog * UByte.MAX_VALUE.toFloat()).toInt().toUByte(), if(digital) UByte.MAX_VALUE else 0.toUByte())
 		}
 
@@ -250,8 +359,11 @@ class StreamInput(val context: Context, val preferences: Preferences)
 			else -> null
 		}
 
-		fun dpad(target: String, defaultDirection: Boolean): Boolean =
-			pressed(target, defaultKey(target), defaultDirection)
+		fun dpad(target: String, defaultDirection: Boolean): Boolean
+		{
+			val defaultAxis = if(target == "dpad_left" || target == "dpad_right") MotionEvent.AXIS_HAT_X else MotionEvent.AXIS_HAT_Y
+			return pressed(target, defaultKey(target), defaultDirection && isAllowed(PhysicalInputAtom(axis = defaultAxis)))
+		}
 
 		var buttons = 0U
 		fun setButton(target: String, mask: UInt)

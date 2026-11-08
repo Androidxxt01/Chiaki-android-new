@@ -54,6 +54,7 @@ class StreamActivity : AppCompatActivity()
 	private lateinit var insetsController: WindowInsetsControllerCompat
 
 	private val uiVisibilityHandler = Handler(Looper.getMainLooper())
+	private var specialControlsVisibilityOverride: Boolean? = null
 
 	override fun onCreate(savedInstanceState: Bundle?)
 	{
@@ -109,6 +110,22 @@ class StreamActivity : AppCompatActivity()
 			viewModel.setTouchpadOnlyEnabled(isChecked)
 			showOverlay()
 		}
+		viewModel.input.toggleOnScreenControlsCallback = {
+			val currentlyVisible = specialControlsVisibilityOverride ?: (viewModel.preferences.onScreenControlsGamepadMode != "hide")
+			specialControlsVisibilityOverride = !currentlyVisible
+			viewModel.setTouchpadOnlyEnabled(false)
+			viewModel.setOnScreenControlsEnabled(!(viewModel.onScreenControlsEnabled.value ?: false))
+			applySpecialControlsVisibilityMode()
+			showOverlay()
+		}
+		viewModel.input.toggleOnScreenTouchpadCallback = {
+			val enabled = !(viewModel.touchpadOnlyEnabled.value ?: false)
+			specialControlsVisibilityOverride = if(enabled) true else null
+			viewModel.setTouchpadOnlyEnabled(enabled)
+			viewModel.setOnScreenControlsEnabled(!enabled)
+			applySpecialControlsVisibilityMode()
+			showOverlay()
+		}
 		binding.controlLayoutButton.setOnClickListener {
 			(supportFragmentManager.findFragmentById(R.id.controlsFragment) as? DefaultTouchControlsFragment)
 				?.openControlLayoutEditor()
@@ -153,10 +170,26 @@ class StreamActivity : AppCompatActivity()
 				.onEach { viewModel.input.touchControllerState = it }
 				.launchIn(lifecycleScope)
 			fragment.onScreenControlsEnabled = viewModel.onScreenControlsEnabled
-			fragment.gamepadDisplayMode = viewModel.preferences.onScreenControlsGamepadMode
+			val mode = effectiveGamepadDisplayMode()
+			fragment.gamepadDisplayMode = if(fragment is TouchpadOnlyFragment || viewModel.touchpadOnlyEnabled.value != true) mode else "hide"
 			if(fragment is TouchpadOnlyFragment)
 				fragment.touchpadOnlyEnabled = viewModel.touchpadOnlyEnabled
 		}
+	}
+
+	private fun applySpecialControlsVisibilityMode()
+	{
+		val mode = effectiveGamepadDisplayMode()
+		(supportFragmentManager.findFragmentById(R.id.controlsFragment) as? TouchControlsFragment)?.gamepadDisplayMode =
+			if(viewModel.touchpadOnlyEnabled.value == true) "hide" else mode
+		(supportFragmentManager.findFragmentById(R.id.touchpadOnlyFragment) as? TouchControlsFragment)?.gamepadDisplayMode = mode
+	}
+
+	private fun effectiveGamepadDisplayMode(): String = when(specialControlsVisibilityOverride)
+	{
+		false -> "hide"
+		true -> "always"
+		null -> viewModel.preferences.onScreenControlsGamepadMode
 	}
 
 	override fun onResume()
