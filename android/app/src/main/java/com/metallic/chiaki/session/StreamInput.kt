@@ -186,16 +186,38 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		)
 	}
 
+	private fun triggerAlias(atom: PhysicalInputAtom): PhysicalInputAtom? = when(atom.keyCode)
+	{
+		KeyEvent.KEYCODE_BUTTON_L2 -> PhysicalInputAtom(axis = MotionEvent.AXIS_LTRIGGER)
+		KeyEvent.KEYCODE_BUTTON_R2 -> PhysicalInputAtom(axis = MotionEvent.AXIS_RTRIGGER)
+		else -> when(atom.axis)
+		{
+			MotionEvent.AXIS_LTRIGGER -> PhysicalInputAtom(keyCode = KeyEvent.KEYCODE_BUTTON_L2)
+			MotionEvent.AXIS_RTRIGGER -> PhysicalInputAtom(keyCode = KeyEvent.KEYCODE_BUTTON_R2)
+			else -> null
+		}
+	}
+
 	private fun PhysicalDeviceState.isAtomPressed(atom: PhysicalInputAtom): Boolean = when
 	{
-		atom.keyCode != null -> atom.keyCode in pressedKeys
+		atom.keyCode != null -> atom.keyCode in pressedKeys ||
+			(atom.keyCode == KeyEvent.KEYCODE_BUTTON_L2 && triggerAxisPressed(MotionEvent.AXIS_LTRIGGER)) ||
+			(atom.keyCode == KeyEvent.KEYCODE_BUTTON_R2 && triggerAxisPressed(MotionEvent.AXIS_RTRIGGER))
 		atom.axis != null -> {
-			val value = axisValues[atom.axis] ?: 0.0f
-			val normalized = if(atom.axis in setOf(MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE))
-				normalizeTriggerAxis(value, atom.axis, device) else kotlin.math.abs(normalizeStickAxis(value, atom.axis, device))
-			normalized > if(atom.axis in setOf(MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE)) 0.45f else 0.65f
+			triggerAlias(atom)?.keyCode?.let { it in pressedKeys } == true ||
+			if(atom.axis in setOf(MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_BRAKE, MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE)) triggerAxisPressed(atom.axis)
+			else {
+				val value = axisValues[atom.axis] ?: 0.0f
+				kotlin.math.abs(normalizeStickAxis(value, atom.axis, device)) > 0.65f
+			}
 		}
 		else -> false
+	}
+
+	private fun PhysicalDeviceState.triggerAxisPressed(axis: Int): Boolean
+	{
+		val value = axisValues[axis] ?: 0.0f
+		return normalizeTriggerAxis(value, axis, device) > 0.45f
 	}
 
 	private fun updateComboDelay(state: PhysicalDeviceState)
@@ -243,7 +265,9 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		if(binding.combo.isNotEmpty()) return targetId in selectedCombos
 		val atom = binding.keyCode?.let { PhysicalInputAtom(keyCode = it) }
 			?: binding.axis?.let { PhysicalInputAtom(axis = it) } ?: return false
-		if(atom in claimedComboAtoms || (mapping.values.any { atom in it.combo } && atom !in readyComboAtoms)) return false
+		val comboAtoms = mapping.values.flatMap { it.combo }.toSet()
+		val effectiveAtom = triggerAlias(atom)?.takeIf { it in comboAtoms || it in claimedComboAtoms } ?: atom
+		if(effectiveAtom in claimedComboAtoms || (effectiveAtom in comboAtoms && effectiveAtom !in readyComboAtoms)) return false
 		return isAtomPressed(atom)
 	}
 
@@ -287,7 +311,11 @@ class StreamInput(val context: Context, val preferences: Preferences)
 				activeComboTargets.add(targetId)
 			}
 		}
-		fun isAllowed(atom: PhysicalInputAtom): Boolean = atom !in claimedAtoms && (atom !in comboAtoms || atom in readyComboAtoms)
+		fun isAllowed(atom: PhysicalInputAtom): Boolean
+		{
+			val effectiveAtom = triggerAlias(atom)?.takeIf { it in comboAtoms || it in claimedAtoms } ?: atom
+			return effectiveAtom !in claimedAtoms && (effectiveAtom !in comboAtoms || effectiveAtom in readyComboAtoms)
+		}
 
 		fun pressed(target: String, defaultKeyCode: Int? = null, defaultPressed: Boolean = false): Boolean
 		{
