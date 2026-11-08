@@ -81,7 +81,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	private fun refreshDevices(preferredDeviceId: Int? = selectedDeviceId)
 	{
-		devices = InputDevice.getDeviceIds().mapNotNull { InputDevice.getDevice(it) }
+		devices = InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }
 			.filter { PhysicalControllerMappings.isController(it) }
 		val selectedIndex = devices.indexOfFirst { it.id == preferredDeviceId }.let { if(it >= 0) it else 0 }
 		selectedDeviceId = devices.getOrNull(selectedIndex)?.id
