@@ -216,16 +216,16 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		{
 			val binding = profile[target]
 			if(binding?.keyCode != null)
-				return if(binding.keyCode in pressedKeys) UByte.MAX_VALUE else 0U
+				return if(binding.keyCode in pressedKeys) UByte.MAX_VALUE else 0.toUByte()
 			if(binding?.axis != null)
 			{
-				val value = axisValues[binding.axis] ?: return 0U
+				val value = axisValues[binding.axis] ?: return 0.toUByte()
 				return (normalizeTriggerAxis(value, binding.axis, device) * UByte.MAX_VALUE.toFloat()).toInt().coerceIn(0, 255).toUByte()
 			}
 			val rawAxis = axisValues[defaultAxis]
 			val analog = rawAxis?.let { normalizeTriggerAxis(it, defaultAxis, device) } ?: 0.0f
 			val digital = defaultKeyCode in pressedKeys
-			return maxOf((analog * UByte.MAX_VALUE.toFloat()).toInt().toUByte(), if(digital) UByte.MAX_VALUE else 0U)
+			return maxOf((analog * UByte.MAX_VALUE.toFloat()).toInt().toUByte(), if(digital) UByte.MAX_VALUE else 0.toUByte())
 		}
 
 		fun defaultKey(target: String): Int? = when(target)
