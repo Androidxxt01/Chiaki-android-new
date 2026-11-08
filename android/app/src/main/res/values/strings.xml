@@ -99,6 +99,16 @@
     <string name="physical_mapping_left_stick_y">Left stick Y axis</string>
     <string name="physical_mapping_right_stick_x">Right stick X axis</string>
     <string name="physical_mapping_right_stick_y">Right stick Y axis</string>
+    <string name="physical_mapping_profile_actions">Profile actions</string>
+    <string name="physical_mapping_profile_create">Create profile</string>
+    <string name="physical_mapping_profile_rename">Rename profile</string>
+    <string name="physical_mapping_profile_duplicate">Duplicate profile</string>
+    <string name="physical_mapping_profile_delete">Delete profile</string>
+    <string name="physical_mapping_profile_delete_confirm">Delete this mapping profile?</string>
+    <string name="physical_mapping_profile_associate">Associate with selected controller</string>
+    <string name="physical_mapping_profile_global">Use as global profile</string>
+    <string name="physical_mapping_profile_name">Profile name</string>
+    <string name="physical_mapping_profile_associated">controller profile</string>
     <string name="touch_editor_profiles">Profiles</string>
     <string name="touch_editor_default">Default</string>
     <string name="touch_editor_done">Done</string>

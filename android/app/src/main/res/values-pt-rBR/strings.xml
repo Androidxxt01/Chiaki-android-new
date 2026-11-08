@@ -32,6 +32,16 @@
     <string name="physical_mapping_left_stick_y">Eixo Y do stick esquerdo</string>
     <string name="physical_mapping_right_stick_x">Eixo X do stick direito</string>
     <string name="physical_mapping_right_stick_y">Eixo Y do stick direito</string>
+    <string name="physical_mapping_profile_actions">Ações do perfil</string>
+    <string name="physical_mapping_profile_create">Criar perfil</string>
+    <string name="physical_mapping_profile_rename">Renomear perfil</string>
+    <string name="physical_mapping_profile_duplicate">Duplicar perfil</string>
+    <string name="physical_mapping_profile_delete">Excluir perfil</string>
+    <string name="physical_mapping_profile_delete_confirm">Excluir este perfil de mapeamento?</string>
+    <string name="physical_mapping_profile_associate">Associar ao controle selecionado</string>
+    <string name="physical_mapping_profile_global">Usar como perfil global</string>
+    <string name="physical_mapping_profile_name">Nome do perfil</string>
+    <string name="physical_mapping_profile_associated">perfil de controle</string>
     <string name="touch_editor_profiles">Perfis</string>
     <string name="touch_editor_default">Padrão</string>
     <string name="touch_editor_done">Concluir</string>

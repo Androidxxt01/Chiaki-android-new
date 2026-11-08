@@ -7,6 +7,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.widget.EditText
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -15,6 +16,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import com.metallic.chiaki.R
 import com.metallic.chiaki.session.PhysicalControllerMappings
 import com.metallic.chiaki.session.PhysicalInputBinding
@@ -25,9 +27,12 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 {
 	private lateinit var deviceSpinner: Spinner
 	private lateinit var deviceStatus: TextView
+	private lateinit var profileSpinner: Spinner
 	private lateinit var rowsContainer: LinearLayout
 	private var devices: List<InputDevice> = emptyList()
 	private var selectedDeviceId: Int? = null
+	private var selectedProfileId: String = "default"
+	private var updatingProfileSpinner = false
 	private var learningTarget: PhysicalMappingTarget? = null
 	private val mappingButtons = mutableMapOf<String, Button>()
 
@@ -45,6 +50,12 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 		}, matchWidth())
 		page.addView(TextView(this).apply {
 			text = getString(R.string.physical_mapping_instructions)
+		}, matchWidth())
+		profileSpinner = Spinner(this)
+		page.addView(profileSpinner, matchWidth())
+		page.addView(Button(this).apply {
+			text = getString(R.string.physical_mapping_profile_actions)
+			setOnClickListener { showProfileActions() }
 		}, matchWidth())
 		deviceSpinner = Spinner(this)
 		page.addView(deviceSpinner, matchWidth())
@@ -69,6 +80,17 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 				renderRows()
 			}
 		}
+		profileSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+			override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+			override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long)
+			{
+				if(updatingProfileSpinner) return
+				val profile = PhysicalControllerMappings.profiles(this@PhysicalControllerMappingActivity).getOrNull(position) ?: return
+				selectedProfileId = profile.id
+				if(profile.deviceKey == null) PhysicalControllerMappings.setActiveGlobalProfile(this@PhysicalControllerMappingActivity, profile.id)
+				renderRows()
+			}
+		}
 		refreshDevices()
 	}
 
@@ -85,6 +107,10 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			.filter { PhysicalControllerMappings.isController(it) }
 		val selectedIndex = devices.indexOfFirst { it.id == preferredDeviceId }.let { if(it >= 0) it else 0 }
 		selectedDeviceId = devices.getOrNull(selectedIndex)?.id
+		val selectedDevice = devices.getOrNull(selectedIndex)
+		selectedProfileId = if(selectedDevice != null)
+			PhysicalControllerMappings.profileForDevice(this, PhysicalControllerMappings.deviceKey(selectedDevice)).id
+		else PhysicalControllerMappings.activeGlobalProfileId(this)
 		val labels = devices.map { "${it.name} (${it.vendorId.toString(16)}:${it.productId.toString(16)})" }
 		deviceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).apply {
 			setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -92,7 +118,20 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 		if(devices.isNotEmpty())
 			deviceSpinner.setSelection(selectedIndex)
 		deviceStatus.text = if(devices.isEmpty()) getString(R.string.physical_mapping_no_device) else devices[selectedIndex].name
+		renderProfileSelector()
 		renderRows()
+	}
+
+	private fun renderProfileSelector()
+	{
+		val profiles = PhysicalControllerMappings.profiles(this)
+		val selectedIndex = profiles.indexOfFirst { it.id == selectedProfileId }.coerceAtLeast(0)
+		updatingProfileSpinner = true
+		profileSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item,
+			profiles.map { profile -> if(profile.deviceKey == null) profile.name else "${profile.name} (${getString(R.string.physical_mapping_profile_associated)})" }
+		).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+		profileSpinner.setSelection(selectedIndex)
+		updatingProfileSpinner = false
 	}
 
 	private fun renderRows()
@@ -102,7 +141,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 		rowsContainer.removeAllViews()
 		mappingButtons.clear()
 		val device = devices.firstOrNull { it.id == selectedDeviceId }
-		val profile = device?.let { PhysicalControllerMappings.loadProfile(this, PhysicalControllerMappings.deviceKey(it)) }.orEmpty()
+		val profile = PhysicalControllerMappings.loadProfile(this, selectedProfileId, true)
 		PhysicalControllerMappings.targets.forEach { target ->
 			val row = LinearLayout(this).apply {
 				orientation = LinearLayout.HORIZONTAL
@@ -131,7 +170,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	private fun saveLearnedBinding(target: PhysicalMappingTarget, binding: PhysicalInputBinding, device: InputDevice)
 	{
-		PhysicalControllerMappings.saveBinding(this, PhysicalControllerMappings.deviceKey(device), target.id, binding)
+		PhysicalControllerMappings.saveBinding(this, selectedProfileId, target.id, binding)
 		learningTarget = null
 		selectedDeviceId = device.id
 		refreshDevices(device.id)
@@ -139,10 +178,65 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	private fun restoreSelectedProfile()
 	{
-		val device = devices.firstOrNull { it.id == selectedDeviceId } ?: return
-		PhysicalControllerMappings.clearProfile(this, PhysicalControllerMappings.deviceKey(device))
+		PhysicalControllerMappings.clearProfile(this, selectedProfileId)
 		learningTarget = null
 		renderRows()
+	}
+
+	private fun showProfileActions()
+	{
+		val actions = arrayOf(
+			getString(R.string.physical_mapping_profile_create),
+			getString(R.string.physical_mapping_profile_rename),
+			getString(R.string.physical_mapping_profile_duplicate),
+			getString(R.string.physical_mapping_profile_delete),
+			getString(R.string.physical_mapping_profile_associate),
+			getString(R.string.physical_mapping_profile_global)
+		)
+		AlertDialog.Builder(this).setItems(actions) { _, which ->
+			when(which)
+			{
+				0 -> editProfileName(getString(R.string.physical_mapping_profile_create)) { name ->
+					selectedProfileId = PhysicalControllerMappings.createProfile(this, name)
+					refreshDevices()
+				}
+				1 -> if(selectedProfileId != "default") editProfileName(getString(R.string.physical_mapping_profile_rename)) { name ->
+					PhysicalControllerMappings.renameProfile(this, selectedProfileId, name)
+					refreshDevices()
+				}
+				2 -> editProfileName(getString(R.string.physical_mapping_profile_duplicate)) { name ->
+					selectedProfileId = PhysicalControllerMappings.createProfile(this, name, selectedProfileId)
+					refreshDevices()
+				}
+				3 -> if(selectedProfileId != "default") AlertDialog.Builder(this)
+					.setMessage(getString(R.string.physical_mapping_profile_delete_confirm))
+					.setNegativeButton(android.R.string.cancel, null)
+					.setPositiveButton(android.R.string.ok) { _, _ ->
+						PhysicalControllerMappings.deleteProfile(this, selectedProfileId)
+						selectedProfileId = PhysicalControllerMappings.activeGlobalProfileId(this)
+						refreshDevices()
+					}.show()
+				4 -> devices.firstOrNull { it.id == selectedDeviceId }?.let { device ->
+					PhysicalControllerMappings.associateProfile(this, selectedProfileId, PhysicalControllerMappings.deviceKey(device))
+					refreshDevices(device.id)
+				}
+				5 -> {
+					PhysicalControllerMappings.associateProfile(this, selectedProfileId, null)
+					refreshDevices()
+				}
+			}
+		}.show()
+	}
+
+	private fun editProfileName(title: String, onSave: (String) -> Unit)
+	{
+		val input = EditText(this).apply { setSingleLine(); hint = getString(R.string.physical_mapping_profile_name) }
+		AlertDialog.Builder(this).setTitle(title).setView(input)
+			.setNegativeButton(android.R.string.cancel, null)
+			.setPositiveButton(android.R.string.ok) { _, _ ->
+				val name = input.text.toString().trim()
+				if(name.isNotEmpty()) onSave(name)
+			}.show()
 	}
 
 	override fun dispatchKeyEvent(event: KeyEvent): Boolean
