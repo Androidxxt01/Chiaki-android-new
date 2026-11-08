@@ -135,6 +135,10 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 			startActivity(Intent(requireContext(), TouchControlsEditorActivity::class.java))
 			true
 		}
+		preferenceScreen.findPreference<Preference>("physical_controller_mapping")?.setOnPreferenceClickListener {
+			startActivity(Intent(requireContext(), PhysicalControllerMappingActivity::class.java))
+			true
+		}
 	}
 
 	override fun getTitle(resources: Resources): String = resources.getString(R.string.title_settings)

@@ -16,7 +16,7 @@ class StreamInput(val context: Context, val preferences: Preferences)
 
 	val controllerState: ControllerState get()
 	{
-		val controllerState = sensorControllerState or keyControllerState or motionControllerState
+		val controllerState = sensorControllerState or physicalControllerState()
 
 		val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 		@Suppress("DEPRECATION")
@@ -33,19 +33,11 @@ class StreamInput(val context: Context, val preferences: Preferences)
 			else -> {}
 		}
 
-		// prioritize motion controller's l2 and r2 over key
-		// (some controllers send only key, others both but key earlier than full press)
-		if(motionControllerState.l2State > 0U)
-			controllerState.l2State = motionControllerState.l2State
-		if(motionControllerState.r2State > 0U)
-			controllerState.r2State = motionControllerState.r2State
-
 		return controllerState or touchControllerState
 	}
 
 	private val sensorControllerState = ControllerState() // from Motion Sensors
-	private val keyControllerState = ControllerState() // from KeyEvents
-	private val motionControllerState = ControllerState() // from MotionEvents
+	private val physicalDevices = mutableMapOf<String, PhysicalDeviceState>()
 	var touchControllerState = ControllerState()
 		set(value)
 		{
@@ -54,6 +46,19 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		}
 
 	private val swapCrossMoon = preferences.swapCrossMoon
+	private val motionAxes = intArrayOf(
+		MotionEvent.AXIS_X, MotionEvent.AXIS_Y, MotionEvent.AXIS_Z, MotionEvent.AXIS_RZ,
+		MotionEvent.AXIS_RX, MotionEvent.AXIS_RY, MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER,
+		MotionEvent.AXIS_HAT_X, MotionEvent.AXIS_HAT_Y, MotionEvent.AXIS_BRAKE,
+		MotionEvent.AXIS_GAS, MotionEvent.AXIS_THROTTLE
+	)
+
+	private class PhysicalDeviceState(var device: InputDevice?)
+	{
+		var mapping: Map<String, PhysicalInputBinding> = emptyMap()
+		val pressedKeys = mutableSetOf<Int>()
+		val axisValues = mutableMapOf<Int, Float>()
+	}
 
 	private val sensorEventListener = object: SensorEventListener {
 		override fun onSensorChanged(event: SensorEvent)
@@ -125,49 +130,15 @@ class StreamInput(val context: Context, val preferences: Preferences)
 		//Log.i("StreamSession", "key event $event")
 		if(event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP)
 			return false
-
-		when(event.keyCode)
-		{
-			KeyEvent.KEYCODE_BUTTON_L2 -> {
-				keyControllerState.l2State = if(event.action == KeyEvent.ACTION_DOWN) UByte.MAX_VALUE else 0U
-				return true
-			}
-			KeyEvent.KEYCODE_BUTTON_R2 -> {
-				keyControllerState.r2State = if(event.action == KeyEvent.ACTION_DOWN) UByte.MAX_VALUE else 0U
-				return true
-			}
-		}
-
-		val buttonMask: UInt = when(event.keyCode)
-		{
-			// dpad handled by MotionEvents
-			//KeyEvent.KEYCODE_DPAD_LEFT -> ControllerState.BUTTON_DPAD_LEFT
-			//KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerState.BUTTON_DPAD_RIGHT
-			//KeyEvent.KEYCODE_DPAD_UP -> ControllerState.BUTTON_DPAD_UP
-			//KeyEvent.KEYCODE_DPAD_DOWN -> ControllerState.BUTTON_DPAD_DOWN
-			KeyEvent.KEYCODE_BUTTON_A -> if(swapCrossMoon) ControllerState.BUTTON_MOON else ControllerState.BUTTON_CROSS
-			KeyEvent.KEYCODE_BUTTON_B -> if(swapCrossMoon) ControllerState.BUTTON_CROSS else ControllerState.BUTTON_MOON
-			KeyEvent.KEYCODE_BUTTON_X -> if(swapCrossMoon) ControllerState.BUTTON_PYRAMID else ControllerState.BUTTON_BOX
-			KeyEvent.KEYCODE_BUTTON_Y -> if(swapCrossMoon) ControllerState.BUTTON_BOX else ControllerState.BUTTON_PYRAMID
-			KeyEvent.KEYCODE_BUTTON_L1 -> ControllerState.BUTTON_L1
-			KeyEvent.KEYCODE_BUTTON_R1 -> ControllerState.BUTTON_R1
-			KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerState.BUTTON_L3
-			KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerState.BUTTON_R3
-			KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerState.BUTTON_SHARE
-			KeyEvent.KEYCODE_BUTTON_START -> ControllerState.BUTTON_OPTIONS
-			KeyEvent.KEYCODE_BUTTON_C -> ControllerState.BUTTON_PS
-			KeyEvent.KEYCODE_BUTTON_MODE -> ControllerState.BUTTON_PS
-			else -> return false
-		}
-
-		keyControllerState.buttons = keyControllerState.buttons.run {
-			when(event.action)
-			{
-				KeyEvent.ACTION_DOWN -> this or buttonMask
-				KeyEvent.ACTION_UP -> this and buttonMask.inv()
-				else -> this
-			}
-		}
+		val device = event.device
+		val deviceKey = device?.let { PhysicalControllerMappings.deviceKey(it) } ?: "unknown"
+		val state = physicalState(deviceKey, device)
+		if(event.keyCode !in allHandledKeyCodes(state.mapping))
+			return false
+		if(event.action == KeyEvent.ACTION_DOWN)
+			state.pressedKeys.add(event.keyCode)
+		else
+			state.pressedKeys.remove(event.keyCode)
 
 		controllerStateUpdated()
 		return true
@@ -177,30 +148,159 @@ class StreamInput(val context: Context, val preferences: Preferences)
 	{
 		if(event.source and InputDevice.SOURCE_CLASS_JOYSTICK != InputDevice.SOURCE_CLASS_JOYSTICK)
 			return false
-		fun Float.signedAxis() = (this * Short.MAX_VALUE).toInt().toShort()
-		fun Float.unsignedAxis() = (this * UByte.MAX_VALUE.toFloat()).toUInt().toUByte()
-		motionControllerState.leftX = event.getAxisValue(MotionEvent.AXIS_X).signedAxis()
-		motionControllerState.leftY = event.getAxisValue(MotionEvent.AXIS_Y).signedAxis()
-		motionControllerState.rightX = event.getAxisValue(MotionEvent.AXIS_Z).signedAxis()
-		motionControllerState.rightY = event.getAxisValue(MotionEvent.AXIS_RZ).signedAxis()
-		motionControllerState.l2State = event.getAxisValue(MotionEvent.AXIS_LTRIGGER).unsignedAxis()
-		motionControllerState.r2State = event.getAxisValue(MotionEvent.AXIS_RTRIGGER).unsignedAxis()
-		motionControllerState.buttons = motionControllerState.buttons.let {
-			val dpadX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
-			val dpadY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-			val dpadButtons =
-				(if(dpadX > 0.5f) ControllerState.BUTTON_DPAD_RIGHT else 0U) or
-						(if(dpadX < -0.5f) ControllerState.BUTTON_DPAD_LEFT else 0U) or
-						(if(dpadY > 0.5f) ControllerState.BUTTON_DPAD_DOWN else 0U) or
-						(if(dpadY < -0.5f) ControllerState.BUTTON_DPAD_UP else 0U)
-			it and (ControllerState.BUTTON_DPAD_RIGHT or
-					ControllerState.BUTTON_DPAD_LEFT or
-					ControllerState.BUTTON_DPAD_DOWN or
-					ControllerState.BUTTON_DPAD_UP).inv() or
-					dpadButtons
-		}
-		//Log.i("StreamSession", "motionEvent => $motionControllerState")
+		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return false
+		val deviceKey = PhysicalControllerMappings.deviceKey(device)
+		val state = physicalState(deviceKey, device)
+		motionAxes.forEach { state.axisValues[it] = event.getAxisValue(it) }
+		//Log.i("StreamSession", "motionEvent => $state")
 		controllerStateUpdated()
 		return true
+	}
+
+	private fun physicalState(deviceKey: String, device: InputDevice?): PhysicalDeviceState =
+		physicalDevices.getOrPut(deviceKey) {
+			PhysicalDeviceState(device).apply {
+				mapping = PhysicalControllerMappings.loadProfile(context, deviceKey)
+			}
+		}.also { it.device = device ?: it.device }
+
+	private fun allHandledKeyCodes(profile: Map<String, PhysicalInputBinding>): Set<Int>
+	{
+		return profile.values.mapNotNull { it.keyCode }.toSet() + setOf(
+			KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y,
+			KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_L2, KeyEvent.KEYCODE_BUTTON_R2,
+			KeyEvent.KEYCODE_BUTTON_THUMBL, KeyEvent.KEYCODE_BUTTON_THUMBR, KeyEvent.KEYCODE_BUTTON_SELECT,
+			KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_C, KeyEvent.KEYCODE_BUTTON_MODE,
+			KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT
+		)
+	}
+
+	private fun physicalControllerState(): ControllerState
+	{
+		var combined = ControllerState()
+		physicalDevices.values.forEach { input ->
+			combined = combined or input.toControllerState(input.mapping)
+		}
+		return combined
+	}
+
+	private fun PhysicalDeviceState.toControllerState(profile: Map<String, PhysicalInputBinding>): ControllerState
+	{
+		fun pressed(target: String, defaultKeyCode: Int? = null, defaultPressed: Boolean = false): Boolean
+		{
+			val binding = profile[target]
+			return when
+			{
+				binding?.keyCode != null -> binding.keyCode in pressedKeys
+				binding?.axis != null -> axisValues[binding.axis]?.let { kotlin.math.abs(it) > 0.5f } ?: false
+				defaultKeyCode != null -> defaultKeyCode in pressedKeys || defaultPressed
+				else -> defaultPressed
+			}
+		}
+
+		fun axisValue(target: String, defaultAxis: Int): Float
+		{
+			val binding = profile[target]
+			return axisValues[binding?.axis ?: defaultAxis] ?: 0.0f
+		}
+
+		fun stickAxis(target: String, defaultAxis: Int): Short
+		{
+			val binding = profile[target]
+			val value = axisValue(target, defaultAxis)
+			val normalized = if(binding?.axis != null) normalizeStickAxis(value, binding.axis, device) else value
+			return (normalized.coerceIn(-1.0f, 1.0f) * Short.MAX_VALUE).toInt().toShort()
+		}
+
+		fun trigger(target: String, defaultAxis: Int, defaultKeyCode: Int): UByte
+		{
+			val binding = profile[target]
+			if(binding?.keyCode != null)
+				return if(binding.keyCode in pressedKeys) UByte.MAX_VALUE else 0U
+			if(binding?.axis != null)
+			{
+				val value = axisValues[binding.axis] ?: return 0U
+				return (normalizeTriggerAxis(value, binding.axis, device) * UByte.MAX_VALUE.toFloat()).toInt().coerceIn(0, 255).toUByte()
+			}
+			val rawAxis = axisValues[defaultAxis]
+			val analog = rawAxis?.let { normalizeTriggerAxis(it, defaultAxis, device) } ?: 0.0f
+			val digital = defaultKeyCode in pressedKeys
+			return maxOf((analog * UByte.MAX_VALUE.toFloat()).toInt().toUByte(), if(digital) UByte.MAX_VALUE else 0U)
+		}
+
+		fun defaultKey(target: String): Int? = when(target)
+		{
+			"cross" -> if(swapCrossMoon) KeyEvent.KEYCODE_BUTTON_B else KeyEvent.KEYCODE_BUTTON_A
+			"circle" -> if(swapCrossMoon) KeyEvent.KEYCODE_BUTTON_A else KeyEvent.KEYCODE_BUTTON_B
+			"square" -> if(swapCrossMoon) KeyEvent.KEYCODE_BUTTON_Y else KeyEvent.KEYCODE_BUTTON_X
+			"triangle" -> if(swapCrossMoon) KeyEvent.KEYCODE_BUTTON_X else KeyEvent.KEYCODE_BUTTON_Y
+			"l1" -> KeyEvent.KEYCODE_BUTTON_L1
+			"r1" -> KeyEvent.KEYCODE_BUTTON_R1
+			"l2" -> KeyEvent.KEYCODE_BUTTON_L2
+			"r2" -> KeyEvent.KEYCODE_BUTTON_R2
+			"l3" -> KeyEvent.KEYCODE_BUTTON_THUMBL
+			"r3" -> KeyEvent.KEYCODE_BUTTON_THUMBR
+			"options" -> KeyEvent.KEYCODE_BUTTON_START
+			"share" -> KeyEvent.KEYCODE_BUTTON_SELECT
+			"ps" -> if(KeyEvent.KEYCODE_BUTTON_C in pressedKeys) KeyEvent.KEYCODE_BUTTON_C else KeyEvent.KEYCODE_BUTTON_MODE
+			"dpad_up" -> KeyEvent.KEYCODE_DPAD_UP
+			"dpad_down" -> KeyEvent.KEYCODE_DPAD_DOWN
+			"dpad_left" -> KeyEvent.KEYCODE_DPAD_LEFT
+			"dpad_right" -> KeyEvent.KEYCODE_DPAD_RIGHT
+			else -> null
+		}
+
+		fun dpad(target: String, defaultDirection: Boolean): Boolean =
+			pressed(target, defaultKey(target), defaultDirection)
+
+		var buttons = 0U
+		fun setButton(target: String, mask: UInt)
+		{
+			if(pressed(target, defaultKey(target)))
+				buttons = buttons or mask
+		}
+		setButton("cross", ControllerState.BUTTON_CROSS)
+		setButton("circle", ControllerState.BUTTON_MOON)
+		setButton("square", ControllerState.BUTTON_BOX)
+		setButton("triangle", ControllerState.BUTTON_PYRAMID)
+		setButton("l1", ControllerState.BUTTON_L1)
+		setButton("r1", ControllerState.BUTTON_R1)
+		setButton("l3", ControllerState.BUTTON_L3)
+		setButton("r3", ControllerState.BUTTON_R3)
+		setButton("options", ControllerState.BUTTON_OPTIONS)
+		setButton("share", ControllerState.BUTTON_SHARE)
+		setButton("ps", ControllerState.BUTTON_PS)
+		setButton("touchpad", ControllerState.BUTTON_TOUCHPAD)
+		if(dpad("dpad_left", (axisValues[MotionEvent.AXIS_HAT_X] ?: 0.0f) < -0.5f)) buttons = buttons or ControllerState.BUTTON_DPAD_LEFT
+		if(dpad("dpad_right", (axisValues[MotionEvent.AXIS_HAT_X] ?: 0.0f) > 0.5f)) buttons = buttons or ControllerState.BUTTON_DPAD_RIGHT
+		if(dpad("dpad_up", (axisValues[MotionEvent.AXIS_HAT_Y] ?: 0.0f) < -0.5f)) buttons = buttons or ControllerState.BUTTON_DPAD_UP
+		if(dpad("dpad_down", (axisValues[MotionEvent.AXIS_HAT_Y] ?: 0.0f) > 0.5f)) buttons = buttons or ControllerState.BUTTON_DPAD_DOWN
+
+		return ControllerState(
+			buttons = buttons,
+			l2State = trigger("l2", MotionEvent.AXIS_LTRIGGER, KeyEvent.KEYCODE_BUTTON_L2),
+			r2State = trigger("r2", MotionEvent.AXIS_RTRIGGER, KeyEvent.KEYCODE_BUTTON_R2),
+			leftX = stickAxis("left_x", MotionEvent.AXIS_X),
+			leftY = stickAxis("left_y", MotionEvent.AXIS_Y),
+			rightX = stickAxis("right_x", MotionEvent.AXIS_Z),
+			rightY = stickAxis("right_y", MotionEvent.AXIS_RZ)
+		)
+	}
+
+	private fun normalizeStickAxis(value: Float, axis: Int, device: InputDevice?): Float
+	{
+		val range = device?.motionRanges?.firstOrNull { it.axis == axis } ?: return value
+		return if(value < 0.0f && range.min < 0.0f)
+			value / -range.min
+		else if(value > 0.0f && range.max > 0.0f)
+			value / range.max
+		else 0.0f
+	}
+
+	private fun normalizeTriggerAxis(value: Float, axis: Int, device: InputDevice?): Float
+	{
+		val range = device?.motionRanges?.firstOrNull { it.axis == axis } ?: return value.coerceIn(0.0f, 1.0f)
+		val span = range.max - range.min
+		return if(span > 0.0f) ((value - range.min) / span).coerceIn(0.0f, 1.0f) else 0.0f
 	}
 }

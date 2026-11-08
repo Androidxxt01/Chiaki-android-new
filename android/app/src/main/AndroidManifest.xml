@@ -59,6 +59,8 @@
             android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize" />
 
+        <activity android:name=".settings.PhysicalControllerMappingActivity" />
+
         <activity
             android:name=".regist.RegistActivity"
             android:theme="@style/MageTheme"

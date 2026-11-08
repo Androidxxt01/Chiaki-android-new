@@ -18,6 +18,11 @@
             app:title="@string/preferences_touch_controls_title"
             app:icon="@drawable/ic_gamepad"/>
 
+        <Preference
+            app:key="physical_controller_mapping"
+            app:title="@string/preferences_physical_mapping_title"
+            app:icon="@drawable/ic_gamepad"/>
+
         <SwitchPreference
             app:key="@string/preferences_swap_cross_moon_key"
             app:title="@string/preferences_swap_cross_moon_title"
