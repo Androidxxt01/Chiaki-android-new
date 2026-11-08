@@ -179,7 +179,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			updateLearningLabel()
 			return
 		}
-		AlertDialog.Builder(this).setMessage(R.string.physical_mapping_single_or_combo)
+		val dialog = AlertDialog.Builder(this).setMessage(R.string.physical_mapping_single_or_combo)
 			.setItems(arrayOf(getString(R.string.physical_mapping_single), getString(R.string.physical_mapping_combo))) { _, which ->
 				learningTarget = target
 				learningCombo = which == 1
@@ -187,7 +187,24 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 				if(learningCombo) showComboControls()
 				else comboControls.visibility = View.GONE
 				updateLearningLabel()
-			}.show()
+			}.create()
+		dialog.setOnKeyListener { _, keyCode, event ->
+			if(event.action == KeyEvent.ACTION_DOWN && target.kind != PhysicalInputKind.STICK_AXIS)
+			{
+				val device = event.device ?: InputDevice.getDevice(event.deviceId)
+				if(device != null && PhysicalControllerMappings.isController(device))
+				{
+					learningTarget = target
+					learningCombo = false
+					capturedCombo.clear()
+					captureInput(PhysicalInputAtom(keyCode = keyCode), device)
+					dialog.dismiss()
+					return@setOnKeyListener true
+				}
+			}
+			false
+		}
+		dialog.show()
 	}
 
 	private fun showComboControls()
