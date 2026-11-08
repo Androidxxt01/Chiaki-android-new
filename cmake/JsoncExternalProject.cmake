@@ -8,7 +8,8 @@ set(DISABLE_EXTRA_LIBS ON CACHE BOOL "" FORCE)
 set(DISABLE_BSON_OUTPUT ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(json-c
-	URL https://github.com/json-c/json-c/archive/refs/tags/json-c-0.17-20230812.tar.gz
+	URL https://s3.amazonaws.com/json-c_releases/releases/json-c-0.17.tar.gz
+	URL_HASH SHA256=7550914d58fb63b2c3546f3ccfbe11f1c094147bd31a69dcd23714d7956159e6
 )
 FetchContent_MakeAvailable(json-c)
 

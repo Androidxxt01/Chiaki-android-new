@@ -32,6 +32,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: android/app/.cxx/**/_deps
+          key: ${{ runner.os }}-cmake-deps-${{ hashFiles('CMakeLists.txt', 'cmake/**/*.cmake', 'android/app/CMakeLists.txt', 'android/app/src/main/cpp/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-deps-
+
       - name: Install Android NDK and CMake
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
@@ -44,14 +55,27 @@ jobs:
         working-directory: android
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee build.log
+          : > build.log
+          for attempt in 1 2 3; do
+            echo "assembleDebug attempt ${attempt}/3"
+            if ./gradlew assembleDebug --stacktrace --console=plain 2>&1 | tee -a build.log; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Build failed; retrying in 10 seconds"
+              sleep 10
+            fi
+          done
+          exit 1
 
       - name: Show CMake errors
         if: failure()
         working-directory: android
         run: |
-          grep -n -A12 'CMake Error' build.log | head -80
-          grep -rn -A12 'CMake Error' app/.cxx --include='*.log' | head -80
+          grep -n -A12 'CMake Error' build.log | head -80 || true
+          if [ -d app/.cxx ]; then
+            grep -rn -A12 'CMake Error' app/.cxx --include='*.log' | head -80 || true
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
