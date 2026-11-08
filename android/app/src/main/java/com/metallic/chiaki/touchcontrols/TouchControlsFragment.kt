@@ -196,11 +196,10 @@ class DefaultTouchControlsFragment : TouchControlsFragment()
 			rightY = quantizeStick(it.y)
 		}}
 
-		if(this !is TouchpadOnlyFragment)
-			onScreenControlsEnabled?.observe(viewLifecycleOwner, Observer {
-				controlsEnabled = it
-				updateControlsVisibility(view)
-			})
+		onScreenControlsEnabled?.observe(viewLifecycleOwner, Observer {
+			controlsEnabled = it
+			updateControlsVisibility(view)
+		})
 	}
 
 	override fun onResume()
