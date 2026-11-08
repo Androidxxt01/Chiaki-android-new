@@ -23,6 +23,12 @@
             app:title="@string/preferences_physical_mapping_title"
             app:icon="@drawable/ic_gamepad"/>
 
+        <ListPreference
+            app:key="@string/preferences_on_screen_controls_gamepad_mode_key"
+            app:title="@string/preferences_on_screen_controls_gamepad_mode_title"
+            app:summary="%s"
+            app:icon="@drawable/ic_gamepad" />
+
         <SwitchPreference
             app:key="@string/preferences_swap_cross_moon_key"
             app:title="@string/preferences_swap_cross_moon_title"

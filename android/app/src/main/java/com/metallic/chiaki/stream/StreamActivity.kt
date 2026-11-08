@@ -153,6 +153,7 @@ class StreamActivity : AppCompatActivity()
 				.onEach { viewModel.input.touchControllerState = it }
 				.launchIn(lifecycleScope)
 			fragment.onScreenControlsEnabled = viewModel.onScreenControlsEnabled
+			fragment.gamepadDisplayMode = viewModel.preferences.onScreenControlsGamepadMode
 			if(fragment is TouchpadOnlyFragment)
 				fragment.touchpadOnlyEnabled = viewModel.touchpadOnlyEnabled
 		}

@@ -69,6 +69,11 @@ class Preferences(context: Context)
 		get() = sharedPreferences.getBoolean(onScreenControlsEnabledKey, true)
 		set(value) { sharedPreferences.edit().putBoolean(onScreenControlsEnabledKey, value).apply() }
 
+	val onScreenControlsGamepadModeKey get() = resources.getString(R.string.preferences_on_screen_controls_gamepad_mode_key)
+	var onScreenControlsGamepadMode: String
+		get() = sharedPreferences.getString(onScreenControlsGamepadModeKey, "always") ?: "always"
+		set(value) { sharedPreferences.edit().putString(onScreenControlsGamepadModeKey, value).apply() }
+
 	val touchpadOnlyEnabledKey get() = resources.getString(R.string.preferences_touchpad_only_enabled_key)
 	var touchpadOnlyEnabled
 		get() = sharedPreferences.getBoolean(touchpadOnlyEnabledKey, false)

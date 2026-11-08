@@ -10,6 +10,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
+import android.view.InputDevice
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -25,6 +26,7 @@ import androidx.lifecycle.Observer
 import com.metallic.chiaki.R
 import com.metallic.chiaki.databinding.FragmentControlsBinding
 import com.metallic.chiaki.lib.ControllerState
+import com.metallic.chiaki.session.PhysicalControllerMappings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -113,6 +115,17 @@ abstract class TouchControlsFragment : Fragment()
 		_controllerStateSource.flatMapLatest { it }
 
 	var onScreenControlsEnabled: LiveData<Boolean>? = null
+	var gamepadDisplayMode: String = "always"
+	protected var controlsEnabled = true
+	protected fun updateControlsVisibility(view: View)
+	{
+		val hasGamepad = InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }
+			.any { PhysicalControllerMappings.isController(it) }
+		val mode = if(hasGamepad) gamepadDisplayMode else "always"
+		val shouldShow = if(hasGamepad) mode != "hide" else controlsEnabled
+		view.visibility = if(shouldShow) View.VISIBLE else View.GONE
+		view.alpha = if(mode == "dim") 0.45f else 1.0f
+	}
 }
 
 class DefaultTouchControlsFragment : TouchControlsFragment()
@@ -183,9 +196,17 @@ class DefaultTouchControlsFragment : TouchControlsFragment()
 			rightY = quantizeStick(it.y)
 		}}
 
-		onScreenControlsEnabled?.observe(viewLifecycleOwner, Observer {
-			view.visibility = if(it) View.VISIBLE else View.GONE
-		})
+		if(this !is TouchpadOnlyFragment)
+			onScreenControlsEnabled?.observe(viewLifecycleOwner, Observer {
+				controlsEnabled = it
+				updateControlsVisibility(view)
+			})
+	}
+
+	override fun onResume()
+	{
+		super.onResume()
+		view?.let { updateControlsVisibility(it) }
 	}
 
 	/** Opens the layout picker/editor from the stream overlay. */

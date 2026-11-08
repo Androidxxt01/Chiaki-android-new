@@ -1,4 +1,8 @@
 <resources>
+    <string name="preferences_on_screen_controls_gamepad_mode_title">Controles na tela com controle físico</string>
+    <string name="preferences_on_screen_controls_gamepad_always">Sempre mostrar</string>
+    <string name="preferences_on_screen_controls_gamepad_hide">Ocultar</string>
+    <string name="preferences_on_screen_controls_gamepad_dim">Mostrar com opacidade reduzida</string>
     <string name="preferences_physical_mapping_title">Mapeamento de botões</string>
     <string name="physical_mapping_title">Mapeamento de controles físicos</string>
     <string name="physical_mapping_instructions">Escolha um controle conectado, selecione uma entrada do PlayStation e pressione um botão ou mova um gatilho/stick para associá-lo. Entradas não mapeadas mantêm o padrão.</string>

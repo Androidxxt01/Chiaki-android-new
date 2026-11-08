@@ -48,6 +48,7 @@ class DataStore(val preferences: Preferences): PreferenceDataStore()
 		preferences.fpsKey -> preferences.fps.value
 		preferences.bitrateKey -> preferences.bitrate?.toString() ?: ""
 		preferences.codecKey -> preferences.codec.value
+		preferences.onScreenControlsGamepadModeKey -> preferences.onScreenControlsGamepadMode
 		else -> defValue
 	}
 
@@ -71,6 +72,7 @@ class DataStore(val preferences: Preferences): PreferenceDataStore()
 				val codec = Preferences.Codec.values().firstOrNull { it.value == value } ?: return
 				preferences.codec = codec
 			}
+			preferences.onScreenControlsGamepadModeKey -> preferences.onScreenControlsGamepadMode = value ?: "always"
 		}
 	}
 }
@@ -122,6 +124,15 @@ class SettingsFragment: PreferenceFragmentCompat(), TitleFragment
 		preferenceScreen.findPreference<ListPreference>(getString(R.string.preferences_codec_key))?.let {
 			it.entryValues = Preferences.codecAll.map { codec -> codec.value }.toTypedArray()
 			it.entries = Preferences.codecAll.map { codec -> getString(codec.title) }.toTypedArray()
+		}
+
+		preferenceScreen.findPreference<ListPreference>(getString(R.string.preferences_on_screen_controls_gamepad_mode_key))?.let {
+			it.entries = arrayOf(
+				getString(R.string.preferences_on_screen_controls_gamepad_always),
+				getString(R.string.preferences_on_screen_controls_gamepad_hide),
+				getString(R.string.preferences_on_screen_controls_gamepad_dim)
+			)
+			it.entryValues = arrayOf("always", "hide", "dim")
 		}
 
 		val registeredHostsPreference = preferenceScreen.findPreference<Preference>("registered_hosts")

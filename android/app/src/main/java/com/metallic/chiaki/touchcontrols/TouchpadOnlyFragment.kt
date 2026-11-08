@@ -30,8 +30,15 @@ class TouchpadOnlyFragment : TouchControlsFragment()
 	{
 		super.onViewCreated(view, savedInstanceState)
 		touchpadOnlyEnabled?.observe(viewLifecycleOwner, Observer {
-			view.visibility = if(it) View.VISIBLE else View.GONE
+			controlsEnabled = it
+			updateControlsVisibility(view)
 		})
+	}
+
+	override fun onResume()
+	{
+		super.onResume()
+		view?.let { updateControlsVisibility(it) }
 	}
 
 	private fun buttonStateChanged(buttonMask: UInt) = { pressed: Boolean ->

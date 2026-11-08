@@ -151,6 +151,11 @@
     <!-- Don't localize these -->
     <string name="preferences_discovery_enabled_key">discovery_enabled</string>
     <string name="preferences_on_screen_controls_enabled_key">on_screen_controls_enabled</string>
+    <string name="preferences_on_screen_controls_gamepad_mode_key">on_screen_controls_gamepad_mode</string>
+    <string name="preferences_on_screen_controls_gamepad_mode_title">On-screen controls with a physical controller</string>
+    <string name="preferences_on_screen_controls_gamepad_always">Always show</string>
+    <string name="preferences_on_screen_controls_gamepad_hide">Hide</string>
+    <string name="preferences_on_screen_controls_gamepad_dim">Show with reduced opacity</string>
     <string name="preferences_touchpad_only_enabled_key">touchpad_only_enabled</string>
     <string name="preferences_rumble_enabled_key">rumble_enabled</string>
     <string name="preferences_motion_enabled_key">motion_enabled</string>
