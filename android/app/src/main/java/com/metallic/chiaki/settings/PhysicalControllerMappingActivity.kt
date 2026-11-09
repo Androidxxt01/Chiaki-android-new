@@ -38,6 +38,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	private var updatingProfileSpinner = false
 	private var learningTarget: PhysicalMappingTarget? = null
 	private var learningCombo = false
+	private var learningDialog: AlertDialog? = null
 	private val capturedCombo = mutableListOf<PhysicalInputAtom>()
 	private val mappingButtons = mutableMapOf<String, Button>()
 
@@ -179,32 +180,68 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			updateLearningLabel()
 			return
 		}
-		val dialog = AlertDialog.Builder(this).setMessage(R.string.physical_mapping_single_or_combo)
+		AlertDialog.Builder(this).setMessage(R.string.physical_mapping_single_or_combo)
 			.setItems(arrayOf(getString(R.string.physical_mapping_single), getString(R.string.physical_mapping_combo))) { _, which ->
 				learningTarget = target
 				learningCombo = which == 1
 				capturedCombo.clear()
-				if(learningCombo) showComboControls()
-				else comboControls.visibility = View.GONE
-				updateLearningLabel()
-			}.create()
+				if(learningCombo)
+				{
+					showComboControls()
+					updateLearningLabel()
+					showComboLearningDialog()
+				}
+				else
+				{
+					comboControls.visibility = View.GONE
+					updateLearningLabel()
+				}
+			}.show()
+	}
+
+	private fun showComboLearningDialog()
+	{
+		val dialog = AlertDialog.Builder(this)
+			.setTitle(R.string.physical_mapping_combo)
+			.setMessage(getString(R.string.physical_mapping_press_control))
+			.setPositiveButton(R.string.physical_mapping_combo_confirm) { _, _ -> confirmCombo() }
+			.setNeutralButton(R.string.physical_mapping_combo_remove_last) { _, _ -> }
+			.setNegativeButton(R.string.physical_mapping_combo_redo) { _, _ -> }
+			.create()
+
 		dialog.setOnKeyListener { _, keyCode, event ->
-			if(event.action == KeyEvent.ACTION_DOWN && target.kind != PhysicalInputKind.STICK_AXIS)
+			if(event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && learningTarget?.kind != PhysicalInputKind.STICK_AXIS)
 			{
 				val device = event.device ?: InputDevice.getDevice(event.deviceId)
 				if(device != null && PhysicalControllerMappings.isController(device))
 				{
-					learningTarget = target
-					learningCombo = false
-					capturedCombo.clear()
 					captureInput(PhysicalInputAtom(keyCode = keyCode), device)
-					dialog.dismiss()
 					return@setOnKeyListener true
 				}
 			}
 			false
 		}
 		dialog.show()
+		dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+			if(capturedCombo.isNotEmpty()) capturedCombo.removeAt(capturedCombo.lastIndex)
+			updateLearningLabel()
+			updateComboDialogMessage()
+		}
+		dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+			capturedCombo.clear()
+			updateLearningLabel()
+			updateComboDialogMessage()
+		}
+		learningDialog = dialog
+	}
+
+	private fun updateComboDialogMessage()
+	{
+		val dialog = learningDialog ?: return
+		val currentLabel = capturedCombo.joinToString(" + ") { PhysicalControllerMappings.bindingLabel(this, PhysicalInputBinding(it.keyCode, it.axis)) }
+		val message = if(capturedCombo.isNotEmpty())
+			"$currentLabel\n${getString(R.string.physical_mapping_combo_add_next)}" else getString(R.string.physical_mapping_press_control)
+		dialog.findViewById<TextView>(android.R.id.message)?.text = message
 	}
 
 	private fun showComboControls()
@@ -245,6 +282,11 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 		}
 		if(atom !in capturedCombo && capturedCombo.size < 4) capturedCombo.add(atom)
 		updateLearningLabel()
+		updateComboDialogMessage()
+		if(capturedCombo.size >= 4)
+		{
+			confirmCombo()
+		}
 	}
 
 	private fun confirmCombo()
@@ -269,6 +311,8 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	private fun saveLearnedBinding(target: PhysicalMappingTarget, binding: PhysicalInputBinding, device: InputDevice)
 	{
 		PhysicalControllerMappings.saveBinding(this, selectedProfileId, target.id, binding)
+		learningDialog?.dismiss()
+		learningDialog = null
 		learningTarget = null
 		learningCombo = false
 		capturedCombo.clear()
@@ -344,7 +388,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	{
 		val target = learningTarget
 		val device = event.device ?: InputDevice.getDevice(event.deviceId)
-		if(target != null && target.kind != PhysicalInputKind.STICK_AXIS && event.action == KeyEvent.ACTION_DOWN && device != null &&
+		if(target != null && target.kind != PhysicalInputKind.STICK_AXIS && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && device != null &&
 			PhysicalControllerMappings.isController(device))
 		{
 			if(selectedDeviceId == null)
