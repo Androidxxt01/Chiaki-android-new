@@ -3,10 +3,12 @@
 package com.metallic.chiaki.settings
 
 import android.os.Bundle
+import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.Window
 import android.widget.EditText
 import android.widget.Toast
 import android.widget.AdapterView
@@ -209,19 +211,23 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			.setNegativeButton(R.string.physical_mapping_combo_redo) { _, _ -> }
 			.create()
 
-		dialog.setOnKeyListener { _, keyCode, event ->
-			if(event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && learningTarget?.kind != PhysicalInputKind.STICK_AXIS)
-			{
-				val device = event.device ?: InputDevice.getDevice(event.deviceId)
-				if(device != null && PhysicalControllerMappings.isController(device))
+		dialog.show()
+		dialog.window?.let { window ->
+			val originalCallback = window.callback
+			window.callback = object : Window.Callback by originalCallback {
+				override fun dispatchKeyEvent(event: KeyEvent): Boolean
 				{
-					captureInput(PhysicalInputAtom(keyCode = keyCode), device)
-					return@setOnKeyListener true
+					Log.d("PhysMap", "key keyCode=${event.keyCode} source=${event.source} action=${event.action}")
+					return if(handleLearningKeyEvent(event)) true else originalCallback.dispatchKeyEvent(event)
+				}
+
+				override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean
+				{
+					Log.d("PhysMap", "motion keyCode=none source=${event.source} action=${event.action}")
+					return if(handleLearningMotionEvent(event)) true else originalCallback.dispatchGenericMotionEvent(event)
 				}
 			}
-			false
 		}
-		dialog.show()
 		dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
 			if(capturedCombo.isNotEmpty()) capturedCombo.removeAt(capturedCombo.lastIndex)
 			updateLearningLabel()
@@ -231,6 +237,12 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			capturedCombo.clear()
 			updateLearningLabel()
 			updateComboDialogMessage()
+		}
+		listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_NEGATIVE).forEach { which ->
+			dialog.getButton(which).apply {
+				isFocusable = false
+				isFocusableInTouchMode = false
+			}
 		}
 		learningDialog = dialog
 	}
@@ -386,44 +398,53 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	override fun dispatchKeyEvent(event: KeyEvent): Boolean
 	{
-		val target = learningTarget
-		val device = event.device ?: InputDevice.getDevice(event.deviceId)
-		if(target != null && target.kind != PhysicalInputKind.STICK_AXIS && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && device != null &&
-			PhysicalControllerMappings.isController(device))
-		{
-			if(selectedDeviceId == null)
-				refreshDevices(device.id)
-			if(device.id == selectedDeviceId)
-			{
-				captureInput(PhysicalInputAtom(keyCode = event.keyCode), device)
-				return true
-			}
-		}
+		Log.d("PhysMap", "key keyCode=${event.keyCode} source=${event.source} action=${event.action}")
+		if(handleLearningKeyEvent(event)) return true
 		return super.dispatchKeyEvent(event)
 	}
 
 	override fun onGenericMotionEvent(event: MotionEvent): Boolean
 	{
+		Log.d("PhysMap", "motion keyCode=none source=${event.source} action=${event.action}")
+		if(handleLearningMotionEvent(event)) return true
 		val device = event.device ?: InputDevice.getDevice(event.deviceId)
 		if(device != null && PhysicalControllerMappings.isController(device) &&
 			devices.none { it.id == device.id })
 			refreshDevices(device.id)
-
-		val target = learningTarget
-		if(target != null && event.action == MotionEvent.ACTION_MOVE &&
-			event.source and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK &&
-			device != null && (target.kind != PhysicalInputKind.BUTTON || learningCombo) && device.id == selectedDeviceId)
-		{
-			val axisKind = if(target.kind == PhysicalInputKind.BUTTON) PhysicalInputKind.TRIGGER else target.kind
-			val binding = findMovedAxis(device, event, axisKind)
-			if(binding != null)
-			{
-				captureInput(PhysicalInputAtom(axis = binding.axis), device)
-				return true
-			}
-		}
 		return super.onGenericMotionEvent(event)
 	}
+
+	private fun handleLearningKeyEvent(event: KeyEvent): Boolean
+	{
+		val target = learningTarget
+		if(target == null || target.kind == PhysicalInputKind.STICK_AXIS || event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0 ||
+			!isControllerSource(event.source)) return false
+		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return false
+		if(!PhysicalControllerMappings.isController(device)) return false
+		if(selectedDeviceId == null) refreshDevices(device.id)
+		if(device.id != selectedDeviceId) return false
+		captureInput(PhysicalInputAtom(keyCode = event.keyCode), device)
+		return true
+	}
+
+	private fun handleLearningMotionEvent(event: MotionEvent): Boolean
+	{
+		val target = learningTarget
+		if(target == null || event.action != MotionEvent.ACTION_MOVE || !isControllerSource(event.source)) return false
+		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return false
+		if(!PhysicalControllerMappings.isController(device)) return false
+		if(selectedDeviceId == null) refreshDevices(device.id)
+		if(device.id != selectedDeviceId || (target.kind == PhysicalInputKind.BUTTON && !learningCombo)) return false
+		val axisKind = if(target.kind == PhysicalInputKind.BUTTON) PhysicalInputKind.TRIGGER else target.kind
+		val binding = findMovedAxis(device, event, axisKind) ?: return false
+		captureInput(PhysicalInputAtom(axis = binding.axis), device)
+		return true
+	}
+
+	private fun isControllerSource(source: Int): Boolean =
+		(source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+		(source and InputDevice.SOURCE_CLASS_JOYSTICK) == InputDevice.SOURCE_CLASS_JOYSTICK ||
+		(source and InputDevice.SOURCE_DPAD) == InputDevice.SOURCE_DPAD
 
 	private fun findMovedAxis(device: InputDevice, event: MotionEvent, kind: PhysicalInputKind): PhysicalInputBinding?
 	{
