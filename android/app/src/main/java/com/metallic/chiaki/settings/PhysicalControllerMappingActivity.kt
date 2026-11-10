@@ -8,7 +8,6 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.Window
 import android.widget.EditText
 import android.widget.Toast
 import android.widget.AdapterView
@@ -33,14 +32,23 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	private lateinit var deviceStatus: TextView
 	private lateinit var profileSpinner: Spinner
 	private lateinit var rowsContainer: LinearLayout
-	private lateinit var comboControls: LinearLayout
+	private lateinit var learningPanel: LinearLayout
+	private lateinit var learningTitle: TextView
+	private lateinit var learningStatus: TextView
+	private lateinit var learningDiag: TextView
+	private lateinit var learningTypeContainer: LinearLayout
+	private lateinit var learningButtonsContainer: LinearLayout
+	private lateinit var btnRemoveLast: Button
+	private lateinit var btnRedo: Button
+	private lateinit var btnConfirm: Button
+	private lateinit var btnCancel: Button
+
 	private var devices: List<InputDevice> = emptyList()
 	private var selectedDeviceId: Int? = null
 	private var selectedProfileId: String = "default"
 	private var updatingProfileSpinner = false
 	private var learningTarget: PhysicalMappingTarget? = null
 	private var learningCombo = false
-	private var learningDialog: AlertDialog? = null
 	private val capturedCombo = mutableListOf<PhysicalInputAtom>()
 	private val mappingButtons = mutableMapOf<String, Button>()
 
@@ -69,8 +77,9 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 		page.addView(deviceSpinner, matchWidth())
 		deviceStatus = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
 		page.addView(deviceStatus, matchWidth())
-		comboControls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE }
-		page.addView(comboControls, matchWidth())
+
+		setupLearningPanel()
+		page.addView(learningPanel, matchWidth())
 
 		val scrollView = ScrollView(this)
 		rowsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -102,6 +111,104 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			}
 		}
 		refreshDevices()
+	}
+
+	private fun setupLearningPanel()
+	{
+		learningPanel = LinearLayout(this).apply {
+			orientation = LinearLayout.VERTICAL
+			setPadding(dp(12), dp(12), dp(12), dp(12))
+			setBackgroundColor(0x22FFFFFF.toInt())
+			visibility = View.GONE
+		}
+		learningTitle = TextView(this).apply {
+			textSize = 18f
+			setTypeface(null, android.graphics.Typeface.BOLD)
+		}
+		learningPanel.addView(learningTitle, matchWidth())
+
+		learningDiag = TextView(this).apply {
+			textSize = 12f
+			setTextColor(0xFF888888.toInt())
+			text = "key=none"
+			setPadding(0, dp(2), 0, dp(4))
+		}
+		learningPanel.addView(learningDiag, matchWidth())
+
+		learningTypeContainer = LinearLayout(this).apply {
+			orientation = LinearLayout.HORIZONTAL
+			setPadding(0, dp(4), 0, dp(4))
+		}
+		val btnSingleChoice = Button(this).apply {
+			text = getString(R.string.physical_mapping_single)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener {
+				learningCombo = false
+				capturedCombo.clear()
+				learningTypeContainer.visibility = View.GONE
+				updateLearningPanelUI()
+			}
+		}
+		val btnComboChoice = Button(this).apply {
+			text = getString(R.string.physical_mapping_combo)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener {
+				learningCombo = true
+				capturedCombo.clear()
+				learningTypeContainer.visibility = View.GONE
+				updateLearningPanelUI()
+			}
+		}
+		learningTypeContainer.addView(btnSingleChoice, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningTypeContainer.addView(btnComboChoice, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningPanel.addView(learningTypeContainer, matchWidth())
+
+		learningStatus = TextView(this).apply {
+			textSize = 14f
+			setPadding(0, dp(4), 0, dp(8))
+		}
+		learningPanel.addView(learningStatus, matchWidth())
+
+		learningButtonsContainer = LinearLayout(this).apply {
+			orientation = LinearLayout.HORIZONTAL
+		}
+		btnRemoveLast = Button(this).apply {
+			text = getString(R.string.physical_mapping_combo_remove_last)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener {
+				if(capturedCombo.isNotEmpty()) capturedCombo.removeAt(capturedCombo.lastIndex)
+				updateLearningPanelUI()
+			}
+		}
+		btnRedo = Button(this).apply {
+			text = getString(R.string.physical_mapping_combo_redo)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener {
+				capturedCombo.clear()
+				updateLearningPanelUI()
+			}
+		}
+		btnConfirm = Button(this).apply {
+			text = getString(R.string.physical_mapping_combo_confirm)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener { confirmCombo() }
+		}
+		btnCancel = Button(this).apply {
+			text = getString(android.R.string.cancel)
+			isFocusable = false
+			isFocusableInTouchMode = false
+			setOnClickListener { cancelLearning() }
+		}
+		learningButtonsContainer.addView(btnRemoveLast, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningButtonsContainer.addView(btnRedo, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningButtonsContainer.addView(btnConfirm, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningButtonsContainer.addView(btnCancel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+		learningPanel.addView(learningButtonsContainer, matchWidth())
 	}
 
 	override fun onResume()
@@ -163,7 +270,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			}, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 			val mapButton = Button(this).apply {
 				isEnabled = device != null
-		text = PhysicalControllerMappings.bindingLabel(this@PhysicalControllerMappingActivity, profile[target.id])
+				text = PhysicalControllerMappings.bindingLabel(this@PhysicalControllerMappingActivity, profile[target.id])
 				setOnClickListener { startLearning(target) }
 			}
 			mappingButtons[target.id] = mapButton
@@ -174,114 +281,75 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	private fun startLearning(target: PhysicalMappingTarget)
 	{
+		learningTarget = target
+		capturedCombo.clear()
+		learningDiag.text = "key=none"
+		learningTitle.text = getString(target.title)
+
 		if(target.kind == PhysicalInputKind.STICK_AXIS)
 		{
-			learningTarget = target
 			learningCombo = false
-			comboControls.visibility = View.GONE
-			updateLearningLabel()
-			return
+			learningTypeContainer.visibility = View.GONE
 		}
-		AlertDialog.Builder(this).setMessage(R.string.physical_mapping_single_or_combo)
-			.setItems(arrayOf(getString(R.string.physical_mapping_single), getString(R.string.physical_mapping_combo))) { _, which ->
-				learningTarget = target
-				learningCombo = which == 1
-				capturedCombo.clear()
-				if(learningCombo)
-				{
-					showComboControls()
-					updateLearningLabel()
-					showComboLearningDialog()
-				}
-				else
-				{
-					comboControls.visibility = View.GONE
-					updateLearningLabel()
-				}
-			}.show()
+		else
+		{
+			learningCombo = false
+			learningTypeContainer.visibility = View.VISIBLE
+		}
+
+		learningPanel.visibility = View.VISIBLE
+		updateLearningPanelUI()
 	}
 
-	private fun showComboLearningDialog()
-	{
-		val dialog = AlertDialog.Builder(this)
-			.setTitle(R.string.physical_mapping_combo)
-			.setMessage(getString(R.string.physical_mapping_press_control))
-			.setPositiveButton(R.string.physical_mapping_combo_confirm) { _, _ -> confirmCombo() }
-			.setNeutralButton(R.string.physical_mapping_combo_remove_last) { _, _ -> }
-			.setNegativeButton(R.string.physical_mapping_combo_redo) { _, _ -> }
-			.create()
-
-		dialog.show()
-		dialog.window?.let { window ->
-			val originalCallback = window.callback
-			window.callback = object : Window.Callback by originalCallback {
-				override fun dispatchKeyEvent(event: KeyEvent): Boolean
-				{
-					Log.d("PhysMap", "key keyCode=${event.keyCode} source=${event.source} action=${event.action}")
-					return if(handleLearningKeyEvent(event)) true else originalCallback.dispatchKeyEvent(event)
-				}
-
-				override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean
-				{
-					Log.d("PhysMap", "motion keyCode=none source=${event.source} action=${event.action}")
-					return if(handleLearningMotionEvent(event)) true else originalCallback.dispatchGenericMotionEvent(event)
-				}
-			}
-		}
-		dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-			if(capturedCombo.isNotEmpty()) capturedCombo.removeAt(capturedCombo.lastIndex)
-			updateLearningLabel()
-			updateComboDialogMessage()
-		}
-		dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-			capturedCombo.clear()
-			updateLearningLabel()
-			updateComboDialogMessage()
-		}
-		listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_NEGATIVE).forEach { which ->
-			dialog.getButton(which).apply {
-				isFocusable = false
-				isFocusableInTouchMode = false
-			}
-		}
-		learningDialog = dialog
-	}
-
-	private fun updateComboDialogMessage()
-	{
-		val dialog = learningDialog ?: return
-		val currentLabel = capturedCombo.joinToString(" + ") { PhysicalControllerMappings.bindingLabel(this, PhysicalInputBinding(it.keyCode, it.axis)) }
-		val message = if(capturedCombo.isNotEmpty())
-			"$currentLabel\n${getString(R.string.physical_mapping_combo_add_next)}" else getString(R.string.physical_mapping_press_control)
-		dialog.findViewById<TextView>(android.R.id.message)?.text = message
-	}
-
-	private fun showComboControls()
-	{
-		comboControls.removeAllViews()
-		comboControls.visibility = View.VISIBLE
-		comboControls.addView(Button(this).apply {
-			text = getString(R.string.physical_mapping_combo_remove_last)
-			setOnClickListener { if(capturedCombo.isNotEmpty()) capturedCombo.removeAt(capturedCombo.lastIndex); updateLearningLabel() }
-		}, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-		comboControls.addView(Button(this).apply {
-			text = getString(R.string.physical_mapping_combo_redo)
-			setOnClickListener { capturedCombo.clear(); updateLearningLabel() }
-		}, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-		comboControls.addView(Button(this).apply {
-			text = getString(R.string.physical_mapping_combo_confirm)
-			setOnClickListener { confirmCombo() }
-		}, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-	}
-
-	private fun updateLearningLabel()
+	private fun updateLearningPanelUI()
 	{
 		val target = learningTarget ?: return
-		val label = if(learningCombo)
-			capturedCombo.joinToString(" + ") { PhysicalControllerMappings.bindingLabel(this, PhysicalInputBinding(it.keyCode, it.axis)) }
-		else getString(R.string.physical_mapping_press_control)
-		mappingButtons[target.id]?.text = if(learningCombo && capturedCombo.size < 4)
-			"$label\n${getString(R.string.physical_mapping_combo_add_next)}" else label
+		if(learningTypeContainer.visibility == View.VISIBLE)
+		{
+			learningStatus.text = getString(R.string.physical_mapping_single_or_combo)
+			learningButtonsContainer.visibility = View.GONE
+			return
+		}
+
+		learningButtonsContainer.visibility = View.VISIBLE
+
+		if(target.kind == PhysicalInputKind.STICK_AXIS || !learningCombo)
+		{
+			btnRemoveLast.visibility = View.GONE
+			btnRedo.visibility = View.GONE
+			btnConfirm.visibility = View.GONE
+			learningStatus.text = getString(R.string.physical_mapping_press_control)
+		}
+		else
+		{
+			btnRemoveLast.visibility = View.VISIBLE
+			btnRedo.visibility = View.VISIBLE
+			btnConfirm.visibility = View.VISIBLE
+
+			val currentLabel = capturedCombo.joinToString(" + ") {
+				PhysicalControllerMappings.bindingLabel(this, PhysicalInputBinding(it.keyCode, it.axis))
+			}
+			if(capturedCombo.isEmpty())
+			{
+				learningStatus.text = getString(R.string.physical_mapping_press_control)
+			}
+			else if(capturedCombo.size < 4)
+			{
+				learningStatus.text = "$currentLabel\n${getString(R.string.physical_mapping_combo_add_next)}"
+			}
+			else
+			{
+				learningStatus.text = currentLabel
+			}
+		}
+	}
+
+	private fun cancelLearning()
+	{
+		learningTarget = null
+		learningCombo = false
+		capturedCombo.clear()
+		learningPanel.visibility = View.GONE
 	}
 
 	private fun captureInput(atom: PhysicalInputAtom, device: InputDevice)
@@ -293,8 +361,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 			return
 		}
 		if(atom !in capturedCombo && capturedCombo.size < 4) capturedCombo.add(atom)
-		updateLearningLabel()
-		updateComboDialogMessage()
+		updateLearningPanelUI()
 		if(capturedCombo.size >= 4)
 		{
 			confirmCombo()
@@ -323,12 +390,10 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	private fun saveLearnedBinding(target: PhysicalMappingTarget, binding: PhysicalInputBinding, device: InputDevice)
 	{
 		PhysicalControllerMappings.saveBinding(this, selectedProfileId, target.id, binding)
-		learningDialog?.dismiss()
-		learningDialog = null
 		learningTarget = null
 		learningCombo = false
 		capturedCombo.clear()
-		comboControls.visibility = View.GONE
+		learningPanel.visibility = View.GONE
 		selectedDeviceId = device.id
 		refreshDevices(device.id)
 	}
@@ -336,7 +401,7 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 	private fun restoreSelectedProfile()
 	{
 		PhysicalControllerMappings.clearProfile(this, selectedProfileId)
-		learningTarget = null
+		cancelLearning()
 		renderRows()
 	}
 
@@ -398,26 +463,62 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	override fun dispatchKeyEvent(event: KeyEvent): Boolean
 	{
+		if(learningPanel.visibility == View.VISIBLE)
+		{
+			learningDiag.text = "key=${event.keyCode} src=0x${Integer.toHexString(event.source)} act=${event.action}"
+		}
 		Log.d("PhysMap", "key keyCode=${event.keyCode} source=${event.source} action=${event.action}")
-		if(handleLearningKeyEvent(event)) return true
+		if(learningTarget != null && learningTypeContainer.visibility != View.VISIBLE)
+		{
+			if(event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0)
+			{
+				handleLearningKeyEvent(event)
+			}
+			return true
+		}
 		return super.dispatchKeyEvent(event)
 	}
 
-	override fun onGenericMotionEvent(event: MotionEvent): Boolean
+	override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean
 	{
+		if(learningPanel.visibility == View.VISIBLE)
+		{
+			val firstAxis = findAnyActiveAxis(event)
+			if(firstAxis != null)
+			{
+				learningDiag.text = "axis=${firstAxis.first} val=${"%.2f".format(firstAxis.second)}"
+			}
+			else
+			{
+				learningDiag.text = "motion src=0x${Integer.toHexString(event.source)} act=${event.action}"
+			}
+		}
 		Log.d("PhysMap", "motion keyCode=none source=${event.source} action=${event.action}")
-		if(handleLearningMotionEvent(event)) return true
+		if(learningTarget != null && learningTypeContainer.visibility != View.VISIBLE)
+		{
+			handleLearningMotionEvent(event)
+			return true
+		}
 		val device = event.device ?: InputDevice.getDevice(event.deviceId)
 		if(device != null && PhysicalControllerMappings.isController(device) &&
 			devices.none { it.id == device.id })
 			refreshDevices(device.id)
-		return super.onGenericMotionEvent(event)
+		return super.dispatchGenericMotionEvent(event)
+	}
+
+	private fun findAnyActiveAxis(event: MotionEvent): Pair<Int, Float>?
+	{
+		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return null
+		return device.motionRanges.asSequence()
+			.map { range -> range.axis to event.getAxisValue(range.axis) }
+			.filter { (_, valuer) -> kotlin.math.abs(valuer) > 0.1f }
+			.firstOrNull()
 	}
 
 	private fun handleLearningKeyEvent(event: KeyEvent): Boolean
 	{
-		val target = learningTarget
-		if(target == null || target.kind == PhysicalInputKind.STICK_AXIS || event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0 ||
+		val target = learningTarget ?: return false
+		if(target.kind == PhysicalInputKind.STICK_AXIS || event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0 ||
 			!isControllerSource(event.source)) return false
 		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return false
 		if(!PhysicalControllerMappings.isController(device)) return false
@@ -429,8 +530,8 @@ class PhysicalControllerMappingActivity : AppCompatActivity()
 
 	private fun handleLearningMotionEvent(event: MotionEvent): Boolean
 	{
-		val target = learningTarget
-		if(target == null || event.action != MotionEvent.ACTION_MOVE || !isControllerSource(event.source)) return false
+		val target = learningTarget ?: return false
+		if(event.action != MotionEvent.ACTION_MOVE || !isControllerSource(event.source)) return false
 		val device = event.device ?: InputDevice.getDevice(event.deviceId) ?: return false
 		if(!PhysicalControllerMappings.isController(device)) return false
 		if(selectedDeviceId == null) refreshDevices(device.id)
